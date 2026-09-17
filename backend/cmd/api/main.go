@@ -2,26 +2,17 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"log"
 	"net/http"
 	"time"
 
 	"floridaAT/internal/config"
 	"floridaAT/internal/database"
+	"floridaAT/internal/httpx"
+	"floridaAT/internal/localidades"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-type healthResponse struct {
-	Status  string `json:"status"`
-	Service string `json:"service"`
-}
-
-type readinessResponse struct {
-	Status   string `json:"status"`
-	Database string `json:"database"`
-}
 
 func main() {
 	appConfig, err := config.Load()
@@ -41,13 +32,26 @@ func main() {
 	cancel()
 
 	if err != nil {
-		log.Fatalf("Error al conectar PostgreSQL: %v", err)
+		log.Fatalf(
+			"Error al conectar PostgreSQL: %v",
+			err,
+		)
 	}
 	defer pool.Close()
+
+	localidadesRepository :=
+		localidades.NewPostgresRepository(pool)
+
+	localidadesService :=
+		localidades.NewService(localidadesRepository)
+
+	localidadesHandler :=
+		localidades.NewHandler(localidadesService)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/healthz", healthHandler)
 	mux.HandleFunc("/api/readyz", readyHandler(pool))
+	mux.Handle("/api/localidades", localidadesHandler)
 
 	server := &http.Server{
 		Addr:              appConfig.HTTPAddr,
@@ -72,20 +76,20 @@ func healthHandler(
 ) {
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)
-		http.Error(
+		httpx.WriteError(
 			w,
-			"Método no permitido",
 			http.StatusMethodNotAllowed,
+			"Método no permitido.",
 		)
 		return
 	}
 
-	writeJSON(
+	httpx.WriteJSON(
 		w,
 		http.StatusOK,
-		healthResponse{
-			Status:  "ok",
-			Service: "florida-api",
+		map[string]string{
+			"status":  "ok",
+			"service": "florida-api",
 		},
 	)
 }
@@ -99,10 +103,10 @@ func readyHandler(
 	) {
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", http.MethodGet)
-			http.Error(
+			httpx.WriteError(
 				w,
-				"Método no permitido",
 				http.StatusMethodNotAllowed,
+				"Método no permitido.",
 			)
 			return
 		}
@@ -119,41 +123,24 @@ func readyHandler(
 				err,
 			)
 
-			writeJSON(
+			httpx.WriteJSON(
 				w,
 				http.StatusServiceUnavailable,
-				readinessResponse{
-					Status:   "unavailable",
-					Database: "error",
+				map[string]string{
+					"status":   "unavailable",
+					"database": "error",
 				},
 			)
 			return
 		}
 
-		writeJSON(
+		httpx.WriteJSON(
 			w,
 			http.StatusOK,
-			readinessResponse{
-				Status:   "ready",
-				Database: "ok",
+			map[string]string{
+				"status":   "ready",
+				"database": "ok",
 			},
 		)
-	}
-}
-
-func writeJSON(
-	w http.ResponseWriter,
-	status int,
-	payload any,
-) {
-	w.Header().Set(
-		"Content-Type",
-		"application/json; charset=utf-8",
-	)
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-
-	if err := json.NewEncoder(w).Encode(payload); err != nil {
-		log.Printf("Error al escribir respuesta JSON: %v", err)
 	}
 }
