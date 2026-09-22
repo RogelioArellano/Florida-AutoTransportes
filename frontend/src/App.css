@@ -182,3 +182,262 @@
     border-right-color: var(--border);
   }
 }
+
+.puntos-page {
+  width: min(1400px, calc(100% - 48px));
+  margin: 0 auto;
+  padding: 48px 0;
+}
+
+.puntos-encabezado {
+  margin-bottom: 32px;
+}
+
+.puntos-encabezado h1 {
+  margin: 8px 0 12px;
+  font-size: clamp(2rem, 5vw, 3rem);
+}
+
+.puntos-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.puntos-panel {
+  padding: 24px;
+  border: 1px solid #374151;
+  border-radius: 16px;
+  background: #1f2937;
+}
+
+.punto-abordaje-form {
+  display: grid;
+  gap: 12px;
+}
+
+.punto-abordaje-form h2 {
+  margin: 0 0 12px;
+}
+
+.punto-abordaje-form input,
+.punto-abordaje-form select,
+.punto-abordaje-form textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid #475569;
+  border-radius: 8px;
+  background: #111827;
+  color: #f8fafc;
+  font: inherit;
+}
+
+.punto-abordaje-form textarea {
+  resize: vertical;
+}
+
+.punto-abordaje-form button {
+  margin-top: 12px;
+}
+
+.coordenadas-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.coordenadas-grid > div {
+  display: grid;
+  gap: 12px;
+}
+
+.puntos-listado-titulo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.puntos-listado-titulo h2 {
+  margin: 0;
+}
+
+.contador {
+  display: grid;
+  min-width: 30px;
+  min-height: 30px;
+  place-items: center;
+  border-radius: 999px;
+  background: #fbbf24;
+  color: #111827;
+  font-weight: 700;
+}
+
+.tabla-contenedor {
+  overflow-x: auto;
+}
+
+.puntos-tabla {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.puntos-tabla th,
+.puntos-tabla td {
+  padding: 14px 12px;
+  border-bottom: 1px solid #374151;
+  text-align: left;
+  vertical-align: top;
+}
+
+.puntos-tabla th {
+  color: #94a3b8;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+}
+
+.estatus {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.estatus-activo {
+  background: #166534;
+  color: #bbf7d0;
+}
+
+.estatus-inactivo {
+  background: #7f1d1d;
+  color: #fecaca;
+}
+
+.estado-vacio {
+  color: #94a3b8;
+}
+
+@media (max-width: 900px) {
+  .puntos-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .puntos-page {
+    width: min(100% - 24px, 1400px);
+    padding: 24px 0;
+  }
+
+  .coordenadas-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  border-bottom: 1px solid #273449;
+  background: rgba(15, 23, 42, 0.96);
+  backdrop-filter: blur(10px);
+}
+
+.app-header-contenido {
+  display: flex;
+  width: min(1400px, calc(100% - 48px));
+  min-height: 76px;
+  margin: 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.app-identidad {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.app-identidad div {
+  display: grid;
+  gap: 2px;
+}
+
+.app-identidad strong {
+  color: #f8fafc;
+}
+
+.app-identidad small {
+  color: #94a3b8;
+}
+
+.app-logo {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 12px;
+  background: #fbbf24;
+  color: #111827;
+  font-weight: 800;
+}
+
+.app-navegacion {
+  display: flex;
+  gap: 8px;
+}
+
+.nav-boton {
+  padding: 10px 16px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #cbd5e1;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.nav-boton:hover {
+  border-color: #475569;
+  background: #1e293b;
+  color: #f8fafc;
+}
+
+.nav-boton-activo {
+  border-color: #fbbf24;
+  background: #fbbf24;
+  color: #111827;
+}
+
+.nav-boton-activo:hover {
+  border-color: #f59e0b;
+  background: #f59e0b;
+  color: #111827;
+}
+
+@media (max-width: 700px) {
+  .app-header-contenido {
+    width: min(100% - 24px, 1400px);
+    padding: 12px 0;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .app-navegacion {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .nav-boton {
+    white-space: nowrap;
+  }
+}

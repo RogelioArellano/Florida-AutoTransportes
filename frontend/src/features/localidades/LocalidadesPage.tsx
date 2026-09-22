@@ -1,8 +1,6 @@
 import {
   useEffect,
   useState,
-  type ChangeEvent,
-  type FormEvent,
 } from 'react'
 
 import {
@@ -10,15 +8,13 @@ import {
   listLocalidades,
 } from './api'
 
+import { LocalidadForm } from './localidadForm'
+import { LocalidadesTable } from './localidadesTable'
+
 import type {
   CreateLocalidadInput,
   Localidad,
 } from './types'
-
-const initialForm: CreateLocalidadInput = {
-  nombre: '',
-  estado: '',
-}
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
@@ -53,24 +49,14 @@ function compareLocalidades(
   )
 }
 
-export function LocalidadesPage() {
-  const [form, setForm] =
-    useState<CreateLocalidadInput>(initialForm)
-
+export default function LocalidadesPage() {
   const [localidades, setLocalidades] =
     useState<Localidad[]>([])
 
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-
   const [loadError, setLoadError] = useState('')
-  const [formError, setFormError] = useState('')
-  const [successMessage, setSuccessMessage] =
-    useState('')
 
   useEffect(() => {
-    // AbortController permite cancelar la petición si el
-    // componente desaparece antes de recibir la respuesta.
     const controller = new AbortController()
 
     async function load() {
@@ -101,67 +87,31 @@ export function LocalidadesPage() {
 
     void load()
 
-    // React ejecuta esta limpieza cuando el componente
-    // deja de estar activo.
     return () => {
       controller.abort()
     }
   }, [])
 
-  function handleInputChange(
-    event: ChangeEvent<HTMLInputElement>,
-  ) {
-    const field =
-      event.target.name as keyof CreateLocalidadInput
+  async function handleCreate(
+    input: CreateLocalidadInput,
+  ): Promise<Localidad> {
+    const created = await createLocalidad(input)
 
-    const value = event.target.value
+    // Usamos la versión funcional de setLocalidades porque
+    // el nuevo estado depende del arreglo anterior.
+    setLocalidades((currentLocalidades) => {
+      const updatedLocalidades = [
+        ...currentLocalidades,
+        created,
+      ]
 
-    // La función recibe el estado anterior y genera uno nuevo.
-    // No modificamos directamente el objeto existente.
-    setForm((currentForm) => ({
-      ...currentForm,
-      [field]: value,
-    }))
-  }
-
-  async function handleSubmit(
-    event: FormEvent<HTMLFormElement>,
-  ) {
-    // Evita que el navegador recargue toda la página.
-    event.preventDefault()
-
-    setSaving(true)
-    setFormError('')
-    setSuccessMessage('')
-
-    try {
-      const created = await createLocalidad({
-        nombre: form.nombre.trim(),
-        estado: form.estado.trim(),
-      })
-
-      // Creamos un arreglo nuevo para que React detecte
-      // el cambio y vuelva a dibujar la tabla.
-      setLocalidades((currentLocalidades) => {
-        return [...currentLocalidades, created].sort(
-          compareLocalidades,
-        )
-      })
-
-      setForm(initialForm)
-      setSuccessMessage(
-        `La localidad ${created.nombre} fue registrada.`,
+      return updatedLocalidades.sort(
+        compareLocalidades,
       )
-    } catch (error) {
-      setFormError(getErrorMessage(error))
-    } finally {
-      setSaving(false)
-    }
-  }
+    })
 
-  const invalidForm =
-    form.nombre.trim() === '' ||
-    form.estado.trim() === ''
+    return created
+  }
 
   return (
     <main className="page">
@@ -179,144 +129,13 @@ export function LocalidadesPage() {
       </header>
 
       <div className="content-grid">
-        <section className="card">
-          <h2>Nueva localidad</h2>
+        <LocalidadForm onSubmit={handleCreate} />
 
-          <form
-            className="form"
-            onSubmit={handleSubmit}
-          >
-            <label htmlFor="nombre">
-              Localidad
-            </label>
-
-            <input
-              id="nombre"
-              name="nombre"
-              type="text"
-              value={form.nombre}
-              onChange={handleInputChange}
-              maxLength={100}
-              autoComplete="off"
-              placeholder="Ejemplo: Morelia"
-              disabled={saving}
-              required
-            />
-
-            <label htmlFor="estado">
-              Estado
-            </label>
-
-            <input
-              id="estado"
-              name="estado"
-              type="text"
-              value={form.estado}
-              onChange={handleInputChange}
-              maxLength={100}
-              autoComplete="off"
-              placeholder="Ejemplo: Michoacán"
-              disabled={saving}
-              required
-            />
-
-            <button
-              type="submit"
-              disabled={saving || invalidForm}
-            >
-              {saving
-                ? 'Guardando...'
-                : 'Guardar localidad'}
-            </button>
-          </form>
-
-          <div
-            className="message-area"
-            aria-live="polite"
-          >
-            {formError !== '' && (
-              <p className="message error">
-                {formError}
-              </p>
-            )}
-
-            {successMessage !== '' && (
-              <p className="message success">
-                {successMessage}
-              </p>
-            )}
-          </div>
-        </section>
-
-        <section className="card">
-          <div className="section-heading">
-            <h2>Localidades registradas</h2>
-
-            <span className="counter">
-              {localidades.length}
-            </span>
-          </div>
-
-          {loading && (
-            <p className="muted">
-              Consultando localidades...
-            </p>
-          )}
-
-          {!loading && loadError !== '' && (
-            <p className="message error">
-              {loadError}
-            </p>
-          )}
-
-          {!loading &&
-            loadError === '' &&
-            localidades.length === 0 && (
-              <p className="muted">
-                Todavía no hay localidades registradas.
-              </p>
-            )}
-
-          {!loading &&
-            loadError === '' &&
-            localidades.length > 0 && (
-              <div className="table-container">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>ID</th>
-                      <th>Localidad</th>
-                      <th>Estado</th>
-                      <th>Estatus</th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {localidades.map((localidad) => (
-                      <tr key={localidad.id}>
-                        <td>{localidad.id}</td>
-                        <td>{localidad.nombre}</td>
-                        <td>{localidad.estado}</td>
-                        <td>
-                          <span
-                            className={
-                              localidad.activa
-                                ? 'status active'
-                                : 'status inactive'
-                            }
-                          >
-                            {localidad.activa
-                              ? 'Activa'
-                              : 'Inactiva'}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-        </section>
+        <LocalidadesTable
+          localidades={localidades}
+          loading={loading}
+          error={loadError}
+        />
       </div>
     </main>
   )
