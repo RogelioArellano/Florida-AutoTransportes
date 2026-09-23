@@ -11,6 +11,7 @@ import (
 	"floridaAT/internal/httpx"
 	"floridaAT/internal/localidades"
 	"floridaAT/internal/puntosabordaje"
+	"floridaAT/internal/rutas"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -58,6 +59,10 @@ func main() {
 	puntosHandler :=
 		puntosabordaje.NewHandler(puntosService)
 
+	rutasRepository := rutas.NewRepository(pool)
+	rutasService := rutas.NewService(rutasRepository)
+	rutasHandler := rutas.NewHandler(rutasService)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/healthz", healthHandler)
 	mux.HandleFunc("/api/readyz", readyHandler(pool))
@@ -67,6 +72,10 @@ func main() {
 		puntosHandler,
 	)
 
+	mux.HandleFunc(
+		"/api/rutas",
+		rutasHandler.Handle,
+	)
 	server := &http.Server{
 		Addr:              appConfig.HTTPAddr,
 		Handler:           mux,

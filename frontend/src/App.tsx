@@ -1,17 +1,38 @@
-import { useState } from 'react'
+import { useEffect,useState } from 'react'
 import LocalidadesPage from './features/localidades/LocalidadesPage'
 import PuntosAbordajePage from './features/puntosAbordaje/PuntosAbordajePage'
+import RutasPage from './features/rutas/RutasPage'
 import './App.css'
 
-// Este tipo solo permite dos valores.
-// TypeScript marcará error si intentamos usar una sección inexistente.
 type Seccion =
   | 'localidades'
   | 'puntos-abordaje'
+  | 'rutas'
 
 function App() {
   const [seccionActiva, setSeccionActiva] =
     useState<Seccion>('localidades')
+
+    useEffect(() => {
+  window.scrollTo({
+    top: 0,
+    left: 0,
+    behavior: 'auto',
+  })
+}, [seccionActiva])
+
+  function renderizarSeccion() {
+    switch (seccionActiva) {
+      case 'localidades':
+        return <LocalidadesPage />
+
+      case 'puntos-abordaje':
+        return <PuntosAbordajePage />
+
+      case 'rutas':
+        return <RutasPage />
+    }
+  }
 
   return (
     <div className="app-shell">
@@ -21,14 +42,19 @@ function App() {
             <span className="app-logo">FA</span>
 
             <div>
-              <strong>Florida Autotransportes</strong>
-              <small>Panel administrativo</small>
+              <strong>
+                Florida Autotransportes
+              </strong>
+
+              <small>
+                Panel administrativo
+              </small>
             </div>
           </div>
 
           <nav
             className="app-navegacion"
-            aria-label="Catálogos operativos"
+            aria-label="Navegación principal"
           >
             <button
               type="button"
@@ -50,12 +76,14 @@ function App() {
             <button
               type="button"
               className={
-                seccionActiva === 'puntos-abordaje'
+                seccionActiva ===
+                'puntos-abordaje'
                   ? 'nav-boton nav-boton-activo'
                   : 'nav-boton'
               }
               aria-pressed={
-                seccionActiva === 'puntos-abordaje'
+                seccionActiva ===
+                'puntos-abordaje'
               }
               onClick={() =>
                 setSeccionActiva(
@@ -65,18 +93,30 @@ function App() {
             >
               Puntos de abordaje
             </button>
+
+            <button
+              type="button"
+              className={
+                seccionActiva === 'rutas'
+                  ? 'nav-boton nav-boton-activo'
+                  : 'nav-boton'
+              }
+              aria-pressed={
+                seccionActiva === 'rutas'
+              }
+              onClick={() =>
+                setSeccionActiva('rutas')
+              }
+            >
+              Rutas
+            </button>
           </nav>
         </div>
       </header>
 
-      {seccionActiva === 'localidades' ? (
-        <LocalidadesPage />
-      ) : (
-        <PuntosAbordajePage />
-      )}
+      {renderizarSeccion()}
     </div>
   )
 }
 
 export default App
-
