@@ -1,4 +1,7 @@
-import { useEffect,useState } from 'react'
+import {
+  useEffect,
+  useState,
+} from 'react'
 import LocalidadesPage from './features/localidades/LocalidadesPage'
 import PuntosAbordajePage from './features/puntosAbordaje/PuntosAbordajePage'
 import RutasPage from './features/rutas/RutasPage'
@@ -14,12 +17,12 @@ function App() {
     useState<Seccion>('localidades')
 
     useEffect(() => {
-  window.scrollTo({
-    top: 0,
-    left: 0,
-    behavior: 'auto',
-  })
-}, [seccionActiva])
+      window.scrollTo({
+        top: 0,
+        left: 0,
+        behavior: 'auto',
+      })
+    }, [seccionActiva])
 
   function renderizarSeccion() {
     switch (seccionActiva) {
