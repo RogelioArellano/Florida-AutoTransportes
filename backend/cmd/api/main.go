@@ -6,12 +6,16 @@ import (
 	"net/http"
 	"time"
 
+	"floridaAT/internal/choferes"
 	"floridaAT/internal/config"
+	"floridaAT/internal/corridas"
 	"floridaAT/internal/database"
 	"floridaAT/internal/httpx"
 	"floridaAT/internal/localidades"
+	"floridaAT/internal/programaciones"
 	"floridaAT/internal/puntosabordaje"
 	"floridaAT/internal/rutas"
+	"floridaAT/internal/unidades"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -63,6 +67,56 @@ func main() {
 	rutasService := rutas.NewService(rutasRepository)
 	rutasHandler := rutas.NewHandler(rutasService)
 
+	unidadesRepository :=
+		unidades.NewPostgresRepository(pool)
+
+	unidadesService :=
+		unidades.NewService(unidadesRepository)
+
+	unidadesHandler :=
+		unidades.NewHandler(unidadesService)
+
+	choferesRepository :=
+		choferes.NewPostgresRepository(pool)
+
+	choferesService :=
+		choferes.NewService(choferesRepository)
+
+	choferesHandler :=
+		choferes.NewHandler(choferesService)
+
+	programacionesRepository :=
+		programaciones.NewPostgresRepository(pool)
+
+	programacionesService :=
+		programaciones.NewService(
+			programacionesRepository,
+		)
+
+	programacionesHandler :=
+		programaciones.NewHandler(
+			programacionesService,
+		)
+
+	horariosService :=
+		programaciones.NewHorarioService(
+			programacionesRepository,
+		)
+
+	horariosHandler :=
+		programaciones.NewHorarioHandler(
+			horariosService,
+		)
+
+	corridasRepository :=
+		corridas.NewPostgresRepository(pool)
+
+	corridasService :=
+		corridas.NewService(corridasRepository)
+
+	corridasHandler :=
+		corridas.NewHandler(corridasService)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/healthz", healthHandler)
 	mux.HandleFunc("/api/readyz", readyHandler(pool))
@@ -76,6 +130,32 @@ func main() {
 		"/api/rutas",
 		rutasHandler.Handle,
 	)
+
+	mux.HandleFunc(
+		"/api/unidades",
+		unidadesHandler.Handle,
+	)
+
+	mux.HandleFunc(
+		"/api/choferes",
+		choferesHandler.Handle,
+	)
+
+	mux.HandleFunc(
+		"/api/programaciones",
+		programacionesHandler.Handle,
+	)
+
+	mux.HandleFunc(
+		"/api/programaciones/horarios",
+		horariosHandler.Handle,
+	)
+
+	mux.HandleFunc(
+		"/api/corridas",
+		corridasHandler.Handle,
+	)
+
 	server := &http.Server{
 		Addr:              appConfig.HTTPAddr,
 		Handler:           mux,
