@@ -25,6 +25,21 @@ type reservaService interface {
 		ctx context.Context,
 		filter ListFilter,
 	) ([]Reserva, error)
+
+	GetByID(
+		ctx context.Context,
+		reservaID int64,
+	) (Reserva, error)
+
+	RegisterPayment(
+		ctx context.Context,
+		input RegistrarPagoInput,
+	) (Reserva, error)
+
+	Confirm(
+		ctx context.Context,
+		input ConfirmarInput,
+	) (Reserva, error)
 }
 
 type Handler struct {
@@ -62,6 +77,176 @@ func (h *Handler) Handle(
 			"método no permitido",
 		)
 	}
+}
+
+// HandlePayments atiende las operaciones relacionadas
+// con los pagos posteriores de una reserva.
+//
+// Se mantiene separado de Handle porque utiliza una ruta
+// diferente:
+//
+//	POST /api/reservas/pagos
+func (h *Handler) HandlePayments(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	switch r.Method {
+	case http.MethodPost:
+		h.registerPayment(w, r)
+
+	default:
+		w.Header().Set(
+			"Allow",
+			"POST",
+		)
+
+		responderError(
+			w,
+			http.StatusMethodNotAllowed,
+			"método no permitido",
+		)
+	}
+}
+
+// HandleDetail atiende la consulta individual de una reserva.
+//
+// Ejemplo:
+//
+//	GET /api/reservas/2
+//
+// Se mantiene separado de Handle porque /api/reservas
+// representa la colección, mientras que /api/reservas/2
+// representa un recurso específico.
+func (h *Handler) HandleDetail(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	if r.Method != http.MethodGet {
+		w.Header().Set(
+			"Allow",
+			"GET",
+		)
+
+		responderError(
+			w,
+			http.StatusMethodNotAllowed,
+			"método no permitido",
+		)
+		return
+	}
+
+	reservaID, err :=
+		leerReservaIDRuta(r)
+	if err != nil {
+		responderErrorServicio(w, err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(
+		r.Context(),
+		5*time.Second,
+	)
+	defer cancel()
+
+	reserva, err := h.service.GetByID(
+		ctx,
+		reservaID,
+	)
+	if err != nil {
+		responderErrorServicio(w, err)
+		return
+	}
+
+	httpx.WriteJSON(
+		w,
+		http.StatusOK,
+		map[string]any{
+			"data": reserva,
+		},
+	)
+}
+
+// HandleConfirmations atiende la confirmación manual
+// de una reserva.
+//
+// Ruta:
+//
+//	POST /api/reservas/confirmaciones
+func (h *Handler) HandleConfirmations(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	switch r.Method {
+	case http.MethodPost:
+		h.confirm(w, r)
+
+	default:
+		w.Header().Set(
+			"Allow",
+			"POST",
+		)
+
+		responderError(
+			w,
+			http.StatusMethodNotAllowed,
+			"método no permitido",
+		)
+	}
+}
+
+// confirm decodifica la solicitud y delega al Service
+// la confirmación manual de la reserva.
+func (h *Handler) confirm(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	r.Body = http.MaxBytesReader(
+		w,
+		r.Body,
+		1<<20,
+	)
+
+	var input ConfirmarInput
+
+	if err := decodificarJSON(
+		r,
+		&input,
+	); err != nil {
+		responderError(
+			w,
+			http.StatusBadRequest,
+			fmt.Sprintf(
+				"JSON inválido: %v",
+				err,
+			),
+		)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(
+		r.Context(),
+		10*time.Second,
+	)
+	defer cancel()
+
+	reserva, err := h.service.Confirm(
+		ctx,
+		input,
+	)
+	if err != nil {
+		responderErrorServicio(w, err)
+		return
+	}
+
+	// La confirmación modifica una reserva existente,
+	// por lo que respondemos 200 y no 201.
+	httpx.WriteJSON(
+		w,
+		http.StatusOK,
+		map[string]any{
+			"data": reserva,
+		},
+	)
 }
 
 func (h *Handler) create(
@@ -109,6 +294,64 @@ func (h *Handler) create(
 		return
 	}
 
+	httpx.WriteJSON(
+		w,
+		http.StatusCreated,
+		map[string]any{
+			"data": reserva,
+		},
+	)
+}
+
+// registerPayment decodifica la solicitud HTTP y delega
+// las reglas de negocio al Service.
+func (h *Handler) registerPayment(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	r.Body = http.MaxBytesReader(
+		w,
+		r.Body,
+		1<<20,
+	)
+
+	var input RegistrarPagoInput
+
+	if err := decodificarJSON(
+		r,
+		&input,
+	); err != nil {
+		responderError(
+			w,
+			http.StatusBadRequest,
+			fmt.Sprintf(
+				"JSON inválido: %v",
+				err,
+			),
+		)
+		return
+	}
+
+	// El registro realiza un bloqueo y varias operaciones
+	// dentro de una transacción.
+	ctx, cancel := context.WithTimeout(
+		r.Context(),
+		10*time.Second,
+	)
+	defer cancel()
+
+	reserva, err :=
+		h.service.RegisterPayment(
+			ctx,
+			input,
+		)
+	if err != nil {
+		responderErrorServicio(w, err)
+		return
+	}
+
+	// Respondemos 201 porque se creó un nuevo movimiento
+	// dentro de pagos_reserva.
 	httpx.WriteJSON(
 		w,
 		http.StatusCreated,
@@ -218,6 +461,59 @@ func construirFiltro(
 		)
 
 	return filter, nil
+}
+
+// leerReservaIDRuta extrae el identificador ubicado después
+// de /api/reservas/.
+//
+// Ejemplos:
+//
+//	/api/reservas/2       -> 2
+//	/api/reservas/abc     -> error
+//	/api/reservas/2/otro  -> error
+func leerReservaIDRuta(
+	r *http.Request,
+) (int64, error) {
+	const prefijo = "/api/reservas/"
+
+	if !strings.HasPrefix(
+		r.URL.Path,
+		prefijo,
+	) {
+		return 0, fmt.Errorf(
+			"%w: la ruta de la reserva no es válida",
+			ErrDatosInvalidos,
+		)
+	}
+
+	textoID := strings.TrimSpace(
+		strings.TrimPrefix(
+			r.URL.Path,
+			prefijo,
+		),
+	)
+
+	if textoID == "" ||
+		strings.Contains(textoID, "/") {
+		return 0, fmt.Errorf(
+			"%w: se debe proporcionar un único reserva_id",
+			ErrDatosInvalidos,
+		)
+	}
+
+	reservaID, err := strconv.ParseInt(
+		textoID,
+		10,
+		64,
+	)
+	if err != nil || reservaID <= 0 {
+		return 0, fmt.Errorf(
+			"%w: reserva_id debe ser un número entero positivo",
+			ErrDatosInvalidos,
+		)
+	}
+
+	return reservaID, nil
 }
 
 func leerIDQueryOpcional(
@@ -351,6 +647,55 @@ func responderErrorServicio(
 		)
 
 	case errors.Is(err, ErrPagoExcedeTotal):
+		responderError(
+			w,
+			http.StatusConflict,
+			err.Error(),
+		)
+
+	case errors.Is(
+		err,
+		ErrReservaNoEncontrada,
+	):
+		responderError(
+			w,
+			http.StatusNotFound,
+			err.Error(),
+		)
+
+	case errors.Is(
+		err,
+		ErrReservaNoAceptaPagos,
+	):
+		responderError(
+			w,
+			http.StatusConflict,
+			err.Error(),
+		)
+
+	case errors.Is(
+		err,
+		ErrReservaSinSaldo,
+	):
+		responderError(
+			w,
+			http.StatusConflict,
+			err.Error(),
+		)
+
+	case errors.Is(
+		err,
+		ErrPagoExcedeSaldo,
+	):
+		responderError(
+			w,
+			http.StatusConflict,
+			err.Error(),
+		)
+	case errors.Is(
+		err,
+		ErrReservaNoAceptaConfirmacion,
+	):
 		responderError(
 			w,
 			http.StatusConflict,

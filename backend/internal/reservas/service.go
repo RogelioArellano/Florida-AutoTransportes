@@ -48,6 +48,26 @@ var (
 	ErrPagoExcedeTotal = errors.New(
 		"el pago no puede exceder el total de la reserva",
 	)
+
+	ErrReservaNoEncontrada = errors.New(
+		"la reserva no existe",
+	)
+
+	ErrReservaNoAceptaPagos = errors.New(
+		"la reserva no acepta pagos en su estado actual",
+	)
+
+	ErrReservaSinSaldo = errors.New(
+		"la reserva no tiene saldo pendiente",
+	)
+
+	ErrPagoExcedeSaldo = errors.New(
+		"el pago no puede exceder el saldo pendiente",
+	)
+
+	ErrReservaNoAceptaConfirmacion = errors.New(
+		"la reserva no acepta confirmación en su estado actual",
+	)
 )
 
 // CreateParams contiene la información ya validada,
@@ -79,6 +99,21 @@ type Store interface {
 		ctx context.Context,
 		filter ListFilter,
 	) ([]Reserva, error)
+
+	GetByID(
+		ctx context.Context,
+		reservaID int64,
+	) (Reserva, error)
+
+	RegisterPayment(
+		ctx context.Context,
+		input RegistrarPagoInput,
+	) (Reserva, error)
+
+	Confirm(
+		ctx context.Context,
+		input ConfirmarInput,
+	) (Reserva, error)
 }
 
 type Service struct {
@@ -251,6 +286,47 @@ func (s *Service) Create(
 	return s.store.Create(ctx, params)
 }
 
+// RegisterPayment valida y normaliza un abono antes de
+// enviarlo al Repository.
+//
+// El Service valida datos independientes de PostgreSQL:
+//
+//   - identificador de la reserva;
+//   - formato y monto del pago;
+//   - método;
+//   - referencia;
+//   - notas.
+//
+// El Repository comprobará el estado y saldo real de
+// la reserva dentro de una transacción.
+func (s *Service) RegisterPayment(
+	ctx context.Context,
+	input RegistrarPagoInput,
+) (Reserva, error) {
+	if input.ReservaID <= 0 {
+		return Reserva{}, fmt.Errorf(
+			"%w: reserva_id debe ser válido",
+			ErrDatosInvalidos,
+		)
+	}
+
+	// Trabajamos sobre una copia para no modificar el input
+	// recibido por quien llamó al Service.
+	pago := input.PagoInput
+
+	_, err := validarYNormalizarPago(&pago)
+	if err != nil {
+		return Reserva{}, err
+	}
+
+	input.PagoInput = pago
+
+	return s.store.RegisterPayment(
+		ctx,
+		input,
+	)
+}
+
 // List valida y normaliza los filtros antes de consultar
 // el Repository.
 func (s *Service) List(
@@ -362,6 +438,48 @@ func (s *Service) List(
 	}
 
 	return s.store.List(ctx, filter)
+}
+
+// GetByID obtiene el detalle completo de una reserva.
+//
+// A diferencia de List, el resultado incluye todos los
+// movimientos de pago relacionados con la reserva.
+func (s *Service) GetByID(
+	ctx context.Context,
+	reservaID int64,
+) (Reserva, error) {
+	if reservaID <= 0 {
+		return Reserva{}, fmt.Errorf(
+			"%w: reserva_id debe ser válido",
+			ErrDatosInvalidos,
+		)
+	}
+
+	return s.store.GetByID(
+		ctx,
+		reservaID,
+	)
+}
+
+// Confirm marca manualmente una reserva como confirmada.
+//
+// Se utilizará cuando un pasajero sin anticipo confirme
+// mediante atención al cliente o WhatsApp.
+func (s *Service) Confirm(
+	ctx context.Context,
+	input ConfirmarInput,
+) (Reserva, error) {
+	if input.ReservaID <= 0 {
+		return Reserva{}, fmt.Errorf(
+			"%w: reserva_id debe ser válido",
+			ErrDatosInvalidos,
+		)
+	}
+
+	return s.store.Confirm(
+		ctx,
+		input,
+	)
 }
 
 // copiarInput evita efectos secundarios sobre estructuras
@@ -585,6 +703,8 @@ func validarYCalcularDescuento(
 	return montoDescuento, nil
 }
 
+// validarPagoInicial aplica las reglas específicas del pago
+// recibido durante la creación de una reserva.
 func validarPagoInicial(
 	input *CreateInput,
 	totalCentavos int64,
@@ -602,16 +722,15 @@ func validarPagoInicial(
 		return nil
 	}
 
-	pago := input.PagoInicial
-
-	montoCentavos, err := parsearDecimal(
-		string(pago.Monto),
-	)
-	if err != nil || montoCentavos <= 0 {
-		return fmt.Errorf(
-			"%w: el monto del pago debe ser positivo y tener máximo dos decimales",
-			ErrDatosInvalidos,
+	// Las validaciones generales del pago se concentran
+	// en una sola función. Posteriormente será reutilizada
+	// al registrar abonos.
+	montoCentavos, err :=
+		validarYNormalizarPago(
+			input.PagoInicial,
 		)
+	if err != nil {
+		return err
 	}
 
 	if montoCentavos > totalCentavos {
@@ -623,47 +742,13 @@ func validarPagoInicial(
 		)
 	}
 
-	pago.Monto = Dinero(
-		formatearDecimal(montoCentavos),
-	)
-
-	pago.Metodo = MetodoPago(
-		strings.ToUpper(
-			strings.TrimSpace(
-				string(pago.Metodo),
-			),
-		),
-	)
-
-	if !esMetodoPagoValido(pago.Metodo) {
-		return fmt.Errorf(
-			"%w: el método de pago no es válido",
-			ErrDatosInvalidos,
-		)
-	}
-
-	pago.Referencia, err =
-		normalizarTextoOpcional(
-			pago.Referencia,
-			150,
-			"referencia del pago",
-		)
-	if err != nil {
-		return err
-	}
-
-	pago.Notas, err =
-		normalizarTextoOpcional(
-			pago.Notas,
-			1000,
-			"notas del pago",
-		)
-	if err != nil {
-		return err
-	}
-
 	if input.CantidadPasajeros > 1 {
-		// División entera redondeada hacia arriba.
+		// Calculamos el 30% y redondeamos hacia arriba.
+		//
+		// Ejemplo:
+		// total = 85500 centavos
+		// mínimo = (85500 * 30 + 99) / 100
+		// mínimo = 25650 centavos = $256.50
 		anticipoMinimo :=
 			(totalCentavos*30 + 99) / 100
 
@@ -678,6 +763,74 @@ func validarPagoInicial(
 	}
 
 	return nil
+}
+
+// validarYNormalizarPago contiene las reglas que comparte
+// cualquier pago, ya sea un anticipo o un abono posterior.
+//
+// Además de validar, normaliza los campos dentro de pago.
+func validarYNormalizarPago(
+	pago *PagoInput,
+) (int64, error) {
+	if pago == nil {
+		return 0, fmt.Errorf(
+			"%w: se deben proporcionar los datos del pago",
+			ErrDatosInvalidos,
+		)
+	}
+
+	montoCentavos, err := parsearDecimal(
+		string(pago.Monto),
+	)
+	if err != nil || montoCentavos <= 0 {
+		return 0, fmt.Errorf(
+			"%w: el monto del pago debe ser positivo y tener máximo dos decimales",
+			ErrDatosInvalidos,
+		)
+	}
+
+	// Guardamos siempre el importe normalizado:
+	// "300" se convierte en "300.00".
+	pago.Monto = Dinero(
+		formatearDecimal(montoCentavos),
+	)
+
+	pago.Metodo = MetodoPago(
+		strings.ToUpper(
+			strings.TrimSpace(
+				string(pago.Metodo),
+			),
+		),
+	)
+
+	if !esMetodoPagoValido(pago.Metodo) {
+		return 0, fmt.Errorf(
+			"%w: el método de pago no es válido",
+			ErrDatosInvalidos,
+		)
+	}
+
+	pago.Referencia, err =
+		normalizarTextoOpcional(
+			pago.Referencia,
+			150,
+			"referencia del pago",
+		)
+	if err != nil {
+		return 0, err
+	}
+
+	pago.Notas, err =
+		normalizarTextoOpcional(
+			pago.Notas,
+			1000,
+			"notas del pago",
+		)
+	if err != nil {
+		return 0, err
+	}
+
+	return montoCentavos, nil
 }
 
 // parsearDecimal convierte un texto decimal con máximo dos

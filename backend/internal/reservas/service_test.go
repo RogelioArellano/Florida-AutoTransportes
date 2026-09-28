@@ -17,6 +17,21 @@ type fakeStore struct {
 	listResult []Reserva
 	listErr    error
 	listCalls  int
+
+	registerPaymentInput  RegistrarPagoInput
+	registerPaymentResult Reserva
+	registerPaymentErr    error
+	registerPaymentCalls  int
+
+	getByIDInput  int64
+	getByIDResult Reserva
+	getByIDErr    error
+	getByIDCalls  int
+
+	confirmInput  ConfirmarInput
+	confirmResult Reserva
+	confirmErr    error
+	confirmCalls  int
 }
 
 var _ Store = (*fakeStore)(nil)
@@ -47,6 +62,49 @@ func (f *fakeStore) List(
 	}
 
 	return f.listResult, nil
+}
+
+func (f *fakeStore) GetByID(
+	ctx context.Context,
+	reservaID int64,
+) (Reserva, error) {
+	f.getByIDCalls++
+	f.getByIDInput = reservaID
+
+	if f.getByIDErr != nil {
+		return Reserva{}, f.getByIDErr
+	}
+
+	return f.getByIDResult, nil
+}
+
+func (f *fakeStore) RegisterPayment(
+	ctx context.Context,
+	input RegistrarPagoInput,
+) (Reserva, error) {
+	f.registerPaymentCalls++
+	f.registerPaymentInput = input
+
+	if f.registerPaymentErr != nil {
+		return Reserva{},
+			f.registerPaymentErr
+	}
+
+	return f.registerPaymentResult, nil
+}
+
+func (f *fakeStore) Confirm(
+	ctx context.Context,
+	input ConfirmarInput,
+) (Reserva, error) {
+	f.confirmCalls++
+	f.confirmInput = input
+
+	if f.confirmErr != nil {
+		return Reserva{}, f.confirmErr
+	}
+
+	return f.confirmResult, nil
 }
 
 func TestServiceCreateCalculaDescuentoYAnticipo(
@@ -1035,6 +1093,603 @@ func TestServiceListValidaciones(
 					)
 				}
 			},
+		)
+	}
+}
+
+func TestValidarYNormalizarPago(t *testing.T) {
+	referencia := "  TRANSFERENCIA-ABONO-001  "
+	notas := "  Liquidación de la reserva  "
+
+	pago := PagoInput{
+		Monto:      Dinero("555"),
+		Metodo:     MetodoPago(" transferencia "),
+		Referencia: &referencia,
+		Notas:      &notas,
+	}
+
+	montoCentavos, err :=
+		validarYNormalizarPago(&pago)
+	if err != nil {
+		t.Fatalf(
+			"validarYNormalizarPago() devolvió un error inesperado: %v",
+			err,
+		)
+	}
+
+	if montoCentavos != 55_500 {
+		t.Errorf(
+			"montoCentavos = %d; se esperaba 55500",
+			montoCentavos,
+		)
+	}
+
+	if pago.Monto != Dinero("555.00") {
+		t.Errorf(
+			"pago.Monto = %q; se esperaba 555.00",
+			pago.Monto,
+		)
+	}
+
+	if pago.Metodo != MetodoPagoTransferencia {
+		t.Errorf(
+			"pago.Metodo = %q; se esperaba TRANSFERENCIA",
+			pago.Metodo,
+		)
+	}
+
+	if pago.Referencia == nil ||
+		*pago.Referencia !=
+			"TRANSFERENCIA-ABONO-001" {
+		t.Error(
+			"la referencia no fue normalizada correctamente",
+		)
+	}
+
+	if pago.Notas == nil ||
+		*pago.Notas !=
+			"Liquidación de la reserva" {
+		t.Error(
+			"las notas no fueron normalizadas correctamente",
+		)
+	}
+}
+
+func TestValidarYNormalizarPagoRechazaDatosInvalidos(
+	t *testing.T,
+) {
+	pruebas := []struct {
+		nombre string
+		pago   *PagoInput
+	}{
+		{
+			nombre: "pago ausente",
+			pago:   nil,
+		},
+		{
+			nombre: "monto vacío",
+			pago: &PagoInput{
+				Monto:  "",
+				Metodo: MetodoPagoEfectivo,
+			},
+		},
+		{
+			nombre: "monto en cero",
+			pago: &PagoInput{
+				Monto:  "0.00",
+				Metodo: MetodoPagoEfectivo,
+			},
+		},
+		{
+			nombre: "monto negativo",
+			pago: &PagoInput{
+				Monto:  "-100.00",
+				Metodo: MetodoPagoEfectivo,
+			},
+		},
+		{
+			nombre: "más de dos decimales",
+			pago: &PagoInput{
+				Monto:  "100.001",
+				Metodo: MetodoPagoEfectivo,
+			},
+		},
+		{
+			nombre: "método desconocido",
+			pago: &PagoInput{
+				Monto:  "100.00",
+				Metodo: "CHEQUE",
+			},
+		},
+	}
+
+	for _, prueba := range pruebas {
+		t.Run(
+			prueba.nombre,
+			func(t *testing.T) {
+				_, err :=
+					validarYNormalizarPago(
+						prueba.pago,
+					)
+
+				if !errors.Is(
+					err,
+					ErrDatosInvalidos,
+				) {
+					t.Fatalf(
+						"se esperaba ErrDatosInvalidos, se obtuvo %v",
+						err,
+					)
+				}
+			},
+		)
+	}
+}
+
+func TestServiceRegisterPaymentNormalizaYGuarda(
+	t *testing.T,
+) {
+	referencia := "  LIQUIDACION-001  "
+	notas := "  Pago final de la reserva  "
+
+	store := &fakeStore{
+		registerPaymentResult: Reserva{
+			ID:             2,
+			Folio:          "RES-00000002",
+			Total:          Dinero("855.00"),
+			MontoPagado:    Dinero("855.00"),
+			SaldoPendiente: Dinero("0.00"),
+			Estado:         EstadoConfirmada,
+			EstadoPago:     EstadoPagoPagada,
+		},
+	}
+
+	service := NewService(store)
+
+	resultado, err :=
+		service.RegisterPayment(
+			context.Background(),
+			RegistrarPagoInput{
+				ReservaID: 2,
+				PagoInput: PagoInput{
+					Monto:      Dinero("555"),
+					Metodo:     MetodoPago(" transferencia "),
+					Referencia: &referencia,
+					Notas:      &notas,
+				},
+			},
+		)
+	if err != nil {
+		t.Fatalf(
+			"RegisterPayment() devolvió un error inesperado: %v",
+			err,
+		)
+	}
+
+	if store.registerPaymentCalls != 1 {
+		t.Fatalf(
+			"Store.RegisterPayment() fue llamado %d veces; se esperaba 1",
+			store.registerPaymentCalls,
+		)
+	}
+
+	input := store.registerPaymentInput
+
+	if input.ReservaID != 2 {
+		t.Errorf(
+			"ReservaID = %d; se esperaba 2",
+			input.ReservaID,
+		)
+	}
+
+	if input.Monto != Dinero("555.00") {
+		t.Errorf(
+			"Monto = %q; se esperaba 555.00",
+			input.Monto,
+		)
+	}
+
+	if input.Metodo !=
+		MetodoPagoTransferencia {
+		t.Errorf(
+			"Metodo = %q; se esperaba TRANSFERENCIA",
+			input.Metodo,
+		)
+	}
+
+	if input.Referencia == nil ||
+		*input.Referencia != "LIQUIDACION-001" {
+		t.Error(
+			"la referencia no fue normalizada",
+		)
+	}
+
+	if input.Notas == nil ||
+		*input.Notas !=
+			"Pago final de la reserva" {
+		t.Error(
+			"las notas no fueron normalizadas",
+		)
+	}
+
+	if resultado.EstadoPago !=
+		EstadoPagoPagada {
+		t.Errorf(
+			"EstadoPago = %q; se esperaba PAGADA",
+			resultado.EstadoPago,
+		)
+	}
+}
+
+func TestServiceRegisterPaymentValidaciones(
+	t *testing.T,
+) {
+	pruebas := []struct {
+		nombre    string
+		construir func() RegistrarPagoInput
+	}{
+		{
+			nombre: "reserva inválida",
+			construir: func() RegistrarPagoInput {
+				return RegistrarPagoInput{
+					ReservaID: 0,
+					PagoInput: PagoInput{
+						Monto:  "100.00",
+						Metodo: MetodoPagoEfectivo,
+					},
+				}
+			},
+		},
+		{
+			nombre: "monto inválido",
+			construir: func() RegistrarPagoInput {
+				return RegistrarPagoInput{
+					ReservaID: 1,
+					PagoInput: PagoInput{
+						Monto:  "0.00",
+						Metodo: MetodoPagoEfectivo,
+					},
+				}
+			},
+		},
+		{
+			nombre: "método inválido",
+			construir: func() RegistrarPagoInput {
+				return RegistrarPagoInput{
+					ReservaID: 1,
+					PagoInput: PagoInput{
+						Monto:  "100.00",
+						Metodo: "CHEQUE",
+					},
+				}
+			},
+		},
+	}
+
+	for _, prueba := range pruebas {
+		t.Run(
+			prueba.nombre,
+			func(t *testing.T) {
+				store := &fakeStore{}
+				service := NewService(store)
+
+				_, err :=
+					service.RegisterPayment(
+						context.Background(),
+						prueba.construir(),
+					)
+
+				if !errors.Is(
+					err,
+					ErrDatosInvalidos,
+				) {
+					t.Fatalf(
+						"se esperaba ErrDatosInvalidos, se obtuvo %v",
+						err,
+					)
+				}
+
+				if store.registerPaymentCalls != 0 {
+					t.Error(
+						"Store.RegisterPayment() no debe ejecutarse con datos inválidos",
+					)
+				}
+			},
+		)
+	}
+}
+
+func TestServiceRegisterPaymentPropagaErrorStore(
+	t *testing.T,
+) {
+	errorStore := errors.New(
+		"error de PostgreSQL",
+	)
+
+	store := &fakeStore{
+		registerPaymentErr: errorStore,
+	}
+
+	service := NewService(store)
+
+	_, err := service.RegisterPayment(
+		context.Background(),
+		RegistrarPagoInput{
+			ReservaID: 1,
+			PagoInput: PagoInput{
+				Monto:  "100.00",
+				Metodo: MetodoPagoEfectivo,
+			},
+		},
+	)
+
+	if !errors.Is(err, errorStore) {
+		t.Fatalf(
+			"se esperaba el error del Store, se obtuvo %v",
+			err,
+		)
+	}
+}
+
+func TestServiceGetByIDRetornaDetalle(
+	t *testing.T,
+) {
+	store := &fakeStore{
+		getByIDResult: Reserva{
+			ID:             2,
+			Folio:          "RES-00000002",
+			Total:          Dinero("855.00"),
+			MontoPagado:    Dinero("855.00"),
+			SaldoPendiente: Dinero("0.00"),
+			Estado:         EstadoConfirmada,
+			EstadoPago:     EstadoPagoPagada,
+			Pagos: []Pago{
+				{
+					ID:        1,
+					ReservaID: 2,
+					Monto:     Dinero("300.00"),
+					Metodo:    MetodoPagoTransferencia,
+					Estado:    EstadoMovimientoAplicado,
+				},
+				{
+					ID:        2,
+					ReservaID: 2,
+					Monto:     Dinero("555.00"),
+					Metodo:    MetodoPagoTransferencia,
+					Estado:    EstadoMovimientoAplicado,
+				},
+			},
+		},
+	}
+
+	service := NewService(store)
+
+	resultado, err := service.GetByID(
+		context.Background(),
+		2,
+	)
+	if err != nil {
+		t.Fatalf(
+			"GetByID() devolvió un error inesperado: %v",
+			err,
+		)
+	}
+
+	if store.getByIDCalls != 1 {
+		t.Fatalf(
+			"Store.GetByID() fue llamado %d veces; se esperaba 1",
+			store.getByIDCalls,
+		)
+	}
+
+	if store.getByIDInput != 2 {
+		t.Errorf(
+			"reservaID recibido = %d; se esperaba 2",
+			store.getByIDInput,
+		)
+	}
+
+	if resultado.ID != 2 {
+		t.Errorf(
+			"resultado.ID = %d; se esperaba 2",
+			resultado.ID,
+		)
+	}
+
+	if resultado.EstadoPago !=
+		EstadoPagoPagada {
+		t.Errorf(
+			"EstadoPago = %q; se esperaba PAGADA",
+			resultado.EstadoPago,
+		)
+	}
+
+	if len(resultado.Pagos) != 2 {
+		t.Errorf(
+			"se esperaban 2 pagos, se obtuvieron %d",
+			len(resultado.Pagos),
+		)
+	}
+}
+
+func TestServiceGetByIDRechazaIDInvalido(
+	t *testing.T,
+) {
+	store := &fakeStore{}
+	service := NewService(store)
+
+	_, err := service.GetByID(
+		context.Background(),
+		0,
+	)
+
+	if !errors.Is(err, ErrDatosInvalidos) {
+		t.Fatalf(
+			"se esperaba ErrDatosInvalidos, se obtuvo %v",
+			err,
+		)
+	}
+
+	if store.getByIDCalls != 0 {
+		t.Error(
+			"Store.GetByID() no debe ejecutarse con un ID inválido",
+		)
+	}
+}
+
+func TestServiceGetByIDPropagaErrorStore(
+	t *testing.T,
+) {
+	store := &fakeStore{
+		getByIDErr: ErrReservaNoEncontrada,
+	}
+
+	service := NewService(store)
+
+	_, err := service.GetByID(
+		context.Background(),
+		999,
+	)
+
+	if !errors.Is(
+		err,
+		ErrReservaNoEncontrada,
+	) {
+		t.Fatalf(
+			"se esperaba ErrReservaNoEncontrada, se obtuvo %v",
+			err,
+		)
+	}
+
+	if store.getByIDCalls != 1 {
+		t.Errorf(
+			"Store.GetByID() fue llamado %d veces; se esperaba 1",
+			store.getByIDCalls,
+		)
+	}
+}
+
+func TestServiceConfirmValidaYGuarda(
+	t *testing.T,
+) {
+	store := &fakeStore{
+		confirmResult: Reserva{
+			ID:                   3,
+			Folio:                "RES-00000003",
+			Estado:               EstadoConfirmada,
+			EstadoPago:           EstadoPagoSinPago,
+			RequiereConfirmacion: false,
+			Pagos:                []Pago{},
+		},
+	}
+
+	service := NewService(store)
+
+	resultado, err := service.Confirm(
+		context.Background(),
+		ConfirmarInput{
+			ReservaID: 3,
+		},
+	)
+	if err != nil {
+		t.Fatalf(
+			"Confirm() devolvió un error inesperado: %v",
+			err,
+		)
+	}
+
+	if store.confirmCalls != 1 {
+		t.Fatalf(
+			"Store.Confirm() fue llamado %d veces; se esperaba 1",
+			store.confirmCalls,
+		)
+	}
+
+	if store.confirmInput.ReservaID != 3 {
+		t.Errorf(
+			"ReservaID = %d; se esperaba 3",
+			store.confirmInput.ReservaID,
+		)
+	}
+
+	if resultado.Estado != EstadoConfirmada {
+		t.Errorf(
+			"Estado = %q; se esperaba CONFIRMADA",
+			resultado.Estado,
+		)
+	}
+
+	if resultado.EstadoPago != EstadoPagoSinPago {
+		t.Errorf(
+			"EstadoPago = %q; se esperaba SIN_PAGO",
+			resultado.EstadoPago,
+		)
+	}
+
+	if resultado.RequiereConfirmacion {
+		t.Error(
+			"la reserva confirmada no debe requerir confirmación",
+		)
+	}
+}
+
+func TestServiceConfirmRechazaIDInvalido(
+	t *testing.T,
+) {
+	store := &fakeStore{}
+	service := NewService(store)
+
+	_, err := service.Confirm(
+		context.Background(),
+		ConfirmarInput{
+			ReservaID: 0,
+		},
+	)
+
+	if !errors.Is(err, ErrDatosInvalidos) {
+		t.Fatalf(
+			"se esperaba ErrDatosInvalidos, se obtuvo %v",
+			err,
+		)
+	}
+
+	if store.confirmCalls != 0 {
+		t.Error(
+			"Store.Confirm() no debe ejecutarse con un ID inválido",
+		)
+	}
+}
+
+func TestServiceConfirmPropagaErrorStore(
+	t *testing.T,
+) {
+	store := &fakeStore{
+		confirmErr: ErrReservaNoAceptaConfirmacion,
+	}
+
+	service := NewService(store)
+
+	_, err := service.Confirm(
+		context.Background(),
+		ConfirmarInput{
+			ReservaID: 3,
+		},
+	)
+
+	if !errors.Is(
+		err,
+		ErrReservaNoAceptaConfirmacion,
+	) {
+		t.Fatalf(
+			"se esperaba ErrReservaNoAceptaConfirmacion, se obtuvo %v",
+			err,
+		)
+	}
+
+	if store.confirmCalls != 1 {
+		t.Errorf(
+			"Store.Confirm() fue llamado %d veces; se esperaba 1",
+			store.confirmCalls,
 		)
 	}
 }

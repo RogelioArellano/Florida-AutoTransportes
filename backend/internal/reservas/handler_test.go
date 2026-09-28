@@ -21,6 +21,21 @@ type fakeReservaService struct {
 		ctx context.Context,
 		filter ListFilter,
 	) ([]Reserva, error)
+
+	getByIDFn func(
+		ctx context.Context,
+		reservaID int64,
+	) (Reserva, error)
+
+	registerPaymentFn func(
+		ctx context.Context,
+		input RegistrarPagoInput,
+	) (Reserva, error)
+
+	confirmFn func(
+		ctx context.Context,
+		input ConfirmarInput,
+	) (Reserva, error)
 }
 
 var _ reservaService = (*fakeReservaService)(nil)
@@ -49,6 +64,54 @@ func (f *fakeReservaService) List(
 	}
 
 	return f.listFn(ctx, filter)
+}
+
+func (f *fakeReservaService) GetByID(
+	ctx context.Context,
+	reservaID int64,
+) (Reserva, error) {
+	if f.getByIDFn == nil {
+		return Reserva{}, errors.New(
+			"fakeReservaService.GetByID no fue configurado",
+		)
+	}
+
+	return f.getByIDFn(
+		ctx,
+		reservaID,
+	)
+}
+
+func (f *fakeReservaService) RegisterPayment(
+	ctx context.Context,
+	input RegistrarPagoInput,
+) (Reserva, error) {
+	if f.registerPaymentFn == nil {
+		return Reserva{}, errors.New(
+			"fakeReservaService.RegisterPayment no fue configurado",
+		)
+	}
+
+	return f.registerPaymentFn(
+		ctx,
+		input,
+	)
+}
+
+func (f *fakeReservaService) Confirm(
+	ctx context.Context,
+	input ConfirmarInput,
+) (Reserva, error) {
+	if f.confirmFn == nil {
+		return Reserva{}, errors.New(
+			"fakeReservaService.Confirm no fue configurado",
+		)
+	}
+
+	return f.confirmFn(
+		ctx,
+		input,
+	)
 }
 
 func TestHandlerCreate(t *testing.T) {
@@ -415,6 +478,847 @@ func TestHandlerListConFiltros(t *testing.T) {
 		t.Errorf(
 			"se obtuvo el folio %q",
 			respuesta.Data[0].Folio,
+		)
+	}
+}
+
+func TestHandlerRegisterPayment(
+	t *testing.T,
+) {
+	var inputRecibido RegistrarPagoInput
+
+	service := &fakeReservaService{
+		registerPaymentFn: func(
+			ctx context.Context,
+			input RegistrarPagoInput,
+		) (Reserva, error) {
+			inputRecibido = input
+
+			referencia :=
+				"LIQUIDACION-RES-00000002"
+
+			return Reserva{
+				ID:             2,
+				Folio:          "RES-00000002",
+				Total:          Dinero("855.00"),
+				MontoPagado:    Dinero("855.00"),
+				SaldoPendiente: Dinero("0.00"),
+				Estado:         EstadoConfirmada,
+				EstadoPago:     EstadoPagoPagada,
+				Pagos: []Pago{
+					{
+						ID:        1,
+						ReservaID: 2,
+						Monto:     Dinero("300.00"),
+						Metodo:    MetodoPagoTransferencia,
+						Estado:    EstadoMovimientoAplicado,
+					},
+					{
+						ID:         2,
+						ReservaID:  2,
+						Monto:      Dinero("555.00"),
+						Metodo:     MetodoPagoTransferencia,
+						Referencia: &referencia,
+						Estado:     EstadoMovimientoAplicado,
+					},
+				},
+			}, nil
+		},
+	}
+
+	handler := NewHandler(service)
+
+	body := `{
+		"reserva_id": 2,
+		"monto": "555.00",
+		"metodo": "TRANSFERENCIA",
+		"referencia": "LIQUIDACION-RES-00000002",
+		"notas": "Pago final de la reserva"
+	}`
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/reservas/pagos",
+		strings.NewReader(body),
+	)
+
+	request.Header.Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	recorder := httptest.NewRecorder()
+
+	handler.HandlePayments(
+		recorder,
+		request,
+	)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf(
+			"se esperaba status %d, se obtuvo %d. Respuesta: %s",
+			http.StatusCreated,
+			recorder.Code,
+			recorder.Body.String(),
+		)
+	}
+
+	if inputRecibido.ReservaID != 2 {
+		t.Errorf(
+			"ReservaID = %d; se esperaba 2",
+			inputRecibido.ReservaID,
+		)
+	}
+
+	if inputRecibido.Monto !=
+		Dinero("555.00") {
+		t.Errorf(
+			"Monto = %q; se esperaba 555.00",
+			inputRecibido.Monto,
+		)
+	}
+
+	if inputRecibido.Metodo !=
+		MetodoPagoTransferencia {
+		t.Errorf(
+			"Metodo = %q; se esperaba TRANSFERENCIA",
+			inputRecibido.Metodo,
+		)
+	}
+
+	if inputRecibido.Referencia == nil ||
+		*inputRecibido.Referencia !=
+			"LIQUIDACION-RES-00000002" {
+		t.Error(
+			"no se recibió correctamente la referencia",
+		)
+	}
+
+	var respuesta struct {
+		Data Reserva `json:"data"`
+	}
+
+	if err := json.NewDecoder(
+		recorder.Body,
+	).Decode(&respuesta); err != nil {
+		t.Fatalf(
+			"no se pudo decodificar la respuesta: %v",
+			err,
+		)
+	}
+
+	if respuesta.Data.ID != 2 {
+		t.Errorf(
+			"reserva ID = %d; se esperaba 2",
+			respuesta.Data.ID,
+		)
+	}
+
+	if respuesta.Data.MontoPagado !=
+		Dinero("855.00") {
+		t.Errorf(
+			"MontoPagado = %q; se esperaba 855.00",
+			respuesta.Data.MontoPagado,
+		)
+	}
+
+	if respuesta.Data.SaldoPendiente !=
+		Dinero("0.00") {
+		t.Errorf(
+			"SaldoPendiente = %q; se esperaba 0.00",
+			respuesta.Data.SaldoPendiente,
+		)
+	}
+
+	if respuesta.Data.EstadoPago !=
+		EstadoPagoPagada {
+		t.Errorf(
+			"EstadoPago = %q; se esperaba PAGADA",
+			respuesta.Data.EstadoPago,
+		)
+	}
+
+	if len(respuesta.Data.Pagos) != 2 {
+		t.Errorf(
+			"se esperaban 2 pagos, se obtuvieron %d",
+			len(respuesta.Data.Pagos),
+		)
+	}
+}
+
+func TestHandlerRegisterPaymentTraduceErrores(
+	t *testing.T,
+) {
+	pruebas := []struct {
+		nombre         string
+		errorServicio  error
+		statusEsperado int
+	}{
+		{
+			nombre: "datos inválidos",
+			errorServicio: fmt.Errorf(
+				"%w: monto inválido",
+				ErrDatosInvalidos,
+			),
+			statusEsperado: http.StatusBadRequest,
+		},
+		{
+			nombre:         "reserva inexistente",
+			errorServicio:  ErrReservaNoEncontrada,
+			statusEsperado: http.StatusNotFound,
+		},
+		{
+			nombre:         "reserva no acepta pagos",
+			errorServicio:  ErrReservaNoAceptaPagos,
+			statusEsperado: http.StatusConflict,
+		},
+		{
+			nombre:         "reserva sin saldo",
+			errorServicio:  ErrReservaSinSaldo,
+			statusEsperado: http.StatusConflict,
+		},
+		{
+			nombre: "pago excede saldo",
+			errorServicio: fmt.Errorf(
+				"%w: saldo pendiente 100.00",
+				ErrPagoExcedeSaldo,
+			),
+			statusEsperado: http.StatusConflict,
+		},
+		{
+			nombre: "error interno",
+			errorServicio: errors.New(
+				"PostgreSQL no disponible",
+			),
+			statusEsperado: http.StatusInternalServerError,
+		},
+	}
+
+	body := `{
+		"reserva_id": 2,
+		"monto": "100.00",
+		"metodo": "EFECTIVO",
+		"referencia": null,
+		"notas": null
+	}`
+
+	for _, prueba := range pruebas {
+		t.Run(
+			prueba.nombre,
+			func(t *testing.T) {
+				service := &fakeReservaService{
+					registerPaymentFn: func(
+						ctx context.Context,
+						input RegistrarPagoInput,
+					) (Reserva, error) {
+						return Reserva{},
+							prueba.errorServicio
+					},
+				}
+
+				handler := NewHandler(service)
+
+				request := httptest.NewRequest(
+					http.MethodPost,
+					"/api/reservas/pagos",
+					strings.NewReader(body),
+				)
+
+				recorder :=
+					httptest.NewRecorder()
+
+				handler.HandlePayments(
+					recorder,
+					request,
+				)
+
+				if recorder.Code !=
+					prueba.statusEsperado {
+					t.Fatalf(
+						"se esperaba status %d, se obtuvo %d. Respuesta: %s",
+						prueba.statusEsperado,
+						recorder.Code,
+						recorder.Body.String(),
+					)
+				}
+			},
+		)
+	}
+}
+
+func TestHandlerPaymentsRechazaMetodoNoPermitido(
+	t *testing.T,
+) {
+	handler := NewHandler(
+		&fakeReservaService{},
+	)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/reservas/pagos",
+		nil,
+	)
+
+	recorder := httptest.NewRecorder()
+
+	handler.HandlePayments(
+		recorder,
+		request,
+	)
+
+	if recorder.Code !=
+		http.StatusMethodNotAllowed {
+		t.Fatalf(
+			"se esperaba status %d, se obtuvo %d",
+			http.StatusMethodNotAllowed,
+			recorder.Code,
+		)
+	}
+
+	if allow := recorder.Header().Get(
+		"Allow",
+	); allow != "POST" {
+		t.Errorf(
+			"se esperaba Allow POST, se obtuvo %q",
+			allow,
+		)
+	}
+}
+
+func TestHandlerGetByID(
+	t *testing.T,
+) {
+	var reservaIDRecibido int64
+
+	service := &fakeReservaService{
+		getByIDFn: func(
+			ctx context.Context,
+			reservaID int64,
+		) (Reserva, error) {
+			reservaIDRecibido = reservaID
+
+			return Reserva{
+				ID:             2,
+				Folio:          "RES-00000002",
+				PasajeroNombre: "Carlos Ramírez",
+				Total:          Dinero("855.00"),
+				MontoPagado:    Dinero("855.00"),
+				SaldoPendiente: Dinero("0.00"),
+				Estado:         EstadoConfirmada,
+				EstadoPago:     EstadoPagoPagada,
+				Pagos: []Pago{
+					{
+						ID:        1,
+						ReservaID: 2,
+						Monto:     Dinero("300.00"),
+						Metodo:    MetodoPagoTransferencia,
+						Estado:    EstadoMovimientoAplicado,
+					},
+					{
+						ID:        2,
+						ReservaID: 2,
+						Monto:     Dinero("555.00"),
+						Metodo:    MetodoPagoTransferencia,
+						Estado:    EstadoMovimientoAplicado,
+					},
+				},
+			}, nil
+		},
+	}
+
+	handler := NewHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/reservas/2",
+		nil,
+	)
+
+	recorder := httptest.NewRecorder()
+
+	handler.HandleDetail(
+		recorder,
+		request,
+	)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf(
+			"se esperaba status %d, se obtuvo %d. Respuesta: %s",
+			http.StatusOK,
+			recorder.Code,
+			recorder.Body.String(),
+		)
+	}
+
+	if reservaIDRecibido != 2 {
+		t.Errorf(
+			"reservaID recibido = %d; se esperaba 2",
+			reservaIDRecibido,
+		)
+	}
+
+	var respuesta struct {
+		Data Reserva `json:"data"`
+	}
+
+	if err := json.NewDecoder(
+		recorder.Body,
+	).Decode(&respuesta); err != nil {
+		t.Fatalf(
+			"no se pudo decodificar la respuesta: %v",
+			err,
+		)
+	}
+
+	if respuesta.Data.ID != 2 {
+		t.Errorf(
+			"reserva ID = %d; se esperaba 2",
+			respuesta.Data.ID,
+		)
+	}
+
+	if respuesta.Data.Folio !=
+		"RES-00000002" {
+		t.Errorf(
+			"folio = %q; se esperaba RES-00000002",
+			respuesta.Data.Folio,
+		)
+	}
+
+	if respuesta.Data.EstadoPago !=
+		EstadoPagoPagada {
+		t.Errorf(
+			"EstadoPago = %q; se esperaba PAGADA",
+			respuesta.Data.EstadoPago,
+		)
+	}
+
+	if len(respuesta.Data.Pagos) != 2 {
+		t.Errorf(
+			"se esperaban 2 pagos, se obtuvieron %d",
+			len(respuesta.Data.Pagos),
+		)
+	}
+}
+
+func TestHandlerGetByIDRechazaIDInvalido(
+	t *testing.T,
+) {
+	rutas := []string{
+		"/api/reservas/",
+		"/api/reservas/abc",
+		"/api/reservas/0",
+		"/api/reservas/-1",
+		"/api/reservas/2/otro",
+	}
+
+	for _, ruta := range rutas {
+		t.Run(
+			ruta,
+			func(t *testing.T) {
+				service := &fakeReservaService{
+					getByIDFn: func(
+						ctx context.Context,
+						reservaID int64,
+					) (Reserva, error) {
+						t.Fatal(
+							"GetByID no debe ejecutarse con un ID inválido",
+						)
+
+						return Reserva{}, nil
+					},
+				}
+
+				handler := NewHandler(service)
+
+				request := httptest.NewRequest(
+					http.MethodGet,
+					ruta,
+					nil,
+				)
+
+				recorder :=
+					httptest.NewRecorder()
+
+				handler.HandleDetail(
+					recorder,
+					request,
+				)
+
+				if recorder.Code !=
+					http.StatusBadRequest {
+					t.Fatalf(
+						"se esperaba status %d, se obtuvo %d. Respuesta: %s",
+						http.StatusBadRequest,
+						recorder.Code,
+						recorder.Body.String(),
+					)
+				}
+			},
+		)
+	}
+}
+
+func TestHandlerGetByIDReservaNoEncontrada(
+	t *testing.T,
+) {
+	service := &fakeReservaService{
+		getByIDFn: func(
+			ctx context.Context,
+			reservaID int64,
+		) (Reserva, error) {
+			return Reserva{},
+				ErrReservaNoEncontrada
+		},
+	}
+
+	handler := NewHandler(service)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/reservas/999",
+		nil,
+	)
+
+	recorder := httptest.NewRecorder()
+
+	handler.HandleDetail(
+		recorder,
+		request,
+	)
+
+	if recorder.Code !=
+		http.StatusNotFound {
+		t.Fatalf(
+			"se esperaba status %d, se obtuvo %d. Respuesta: %s",
+			http.StatusNotFound,
+			recorder.Code,
+			recorder.Body.String(),
+		)
+	}
+
+	var respuesta struct {
+		Error string `json:"error"`
+	}
+
+	if err := json.NewDecoder(
+		recorder.Body,
+	).Decode(&respuesta); err != nil {
+		t.Fatalf(
+			"no se pudo decodificar la respuesta: %v",
+			err,
+		)
+	}
+
+	if respuesta.Error == "" {
+		t.Error(
+			"se esperaba un mensaje de error",
+		)
+	}
+}
+
+func TestHandlerGetByIDRechazaMetodoNoPermitido(
+	t *testing.T,
+) {
+	handler := NewHandler(
+		&fakeReservaService{},
+	)
+
+	request := httptest.NewRequest(
+		http.MethodDelete,
+		"/api/reservas/2",
+		nil,
+	)
+
+	recorder := httptest.NewRecorder()
+
+	handler.HandleDetail(
+		recorder,
+		request,
+	)
+
+	if recorder.Code !=
+		http.StatusMethodNotAllowed {
+		t.Fatalf(
+			"se esperaba status %d, se obtuvo %d",
+			http.StatusMethodNotAllowed,
+			recorder.Code,
+		)
+	}
+
+	if allow := recorder.Header().Get(
+		"Allow",
+	); allow != "GET" {
+		t.Errorf(
+			"se esperaba Allow GET, se obtuvo %q",
+			allow,
+		)
+	}
+}
+
+func TestHandlerConfirm(
+	t *testing.T,
+) {
+	var inputRecibido ConfirmarInput
+
+	service := &fakeReservaService{
+		confirmFn: func(
+			ctx context.Context,
+			input ConfirmarInput,
+		) (Reserva, error) {
+			inputRecibido = input
+
+			return Reserva{
+				ID:                   3,
+				Folio:                "RES-00000003",
+				Total:                Dinero("450.00"),
+				MontoPagado:          Dinero("0.00"),
+				SaldoPendiente:       Dinero("450.00"),
+				Estado:               EstadoConfirmada,
+				EstadoPago:           EstadoPagoSinPago,
+				RequiereConfirmacion: false,
+				Pagos:                []Pago{},
+			}, nil
+		},
+	}
+
+	handler := NewHandler(service)
+
+	body := `{
+		"reserva_id": 3
+	}`
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/reservas/confirmaciones",
+		strings.NewReader(body),
+	)
+
+	request.Header.Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	recorder := httptest.NewRecorder()
+
+	handler.HandleConfirmations(
+		recorder,
+		request,
+	)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf(
+			"se esperaba status %d, se obtuvo %d. Respuesta: %s",
+			http.StatusOK,
+			recorder.Code,
+			recorder.Body.String(),
+		)
+	}
+
+	if inputRecibido.ReservaID != 3 {
+		t.Errorf(
+			"ReservaID = %d; se esperaba 3",
+			inputRecibido.ReservaID,
+		)
+	}
+
+	var respuesta struct {
+		Data Reserva `json:"data"`
+	}
+
+	if err := json.NewDecoder(
+		recorder.Body,
+	).Decode(&respuesta); err != nil {
+		t.Fatalf(
+			"no se pudo decodificar la respuesta: %v",
+			err,
+		)
+	}
+
+	if respuesta.Data.Estado !=
+		EstadoConfirmada {
+		t.Errorf(
+			"Estado = %q; se esperaba CONFIRMADA",
+			respuesta.Data.Estado,
+		)
+	}
+
+	if respuesta.Data.EstadoPago !=
+		EstadoPagoSinPago {
+		t.Errorf(
+			"EstadoPago = %q; se esperaba SIN_PAGO",
+			respuesta.Data.EstadoPago,
+		)
+	}
+
+	if respuesta.Data.RequiereConfirmacion {
+		t.Error(
+			"la reserva confirmada no debe requerir confirmación",
+		)
+	}
+}
+
+func TestHandlerConfirmTraduceErrores(
+	t *testing.T,
+) {
+	pruebas := []struct {
+		nombre         string
+		errorServicio  error
+		statusEsperado int
+	}{
+		{
+			nombre: "datos inválidos",
+			errorServicio: fmt.Errorf(
+				"%w: reserva_id inválido",
+				ErrDatosInvalidos,
+			),
+			statusEsperado: http.StatusBadRequest,
+		},
+		{
+			nombre:         "reserva inexistente",
+			errorServicio:  ErrReservaNoEncontrada,
+			statusEsperado: http.StatusNotFound,
+		},
+		{
+			nombre:         "estado no confirmable",
+			errorServicio:  ErrReservaNoAceptaConfirmacion,
+			statusEsperado: http.StatusConflict,
+		},
+		{
+			nombre: "error interno",
+			errorServicio: errors.New(
+				"PostgreSQL no disponible",
+			),
+			statusEsperado: http.StatusInternalServerError,
+		},
+	}
+
+	body := `{
+		"reserva_id": 3
+	}`
+
+	for _, prueba := range pruebas {
+		t.Run(
+			prueba.nombre,
+			func(t *testing.T) {
+				service := &fakeReservaService{
+					confirmFn: func(
+						ctx context.Context,
+						input ConfirmarInput,
+					) (Reserva, error) {
+						return Reserva{},
+							prueba.errorServicio
+					},
+				}
+
+				handler := NewHandler(service)
+
+				request := httptest.NewRequest(
+					http.MethodPost,
+					"/api/reservas/confirmaciones",
+					strings.NewReader(body),
+				)
+
+				recorder :=
+					httptest.NewRecorder()
+
+				handler.HandleConfirmations(
+					recorder,
+					request,
+				)
+
+				if recorder.Code !=
+					prueba.statusEsperado {
+					t.Fatalf(
+						"se esperaba status %d, se obtuvo %d. Respuesta: %s",
+						prueba.statusEsperado,
+						recorder.Code,
+						recorder.Body.String(),
+					)
+				}
+			},
+		)
+	}
+}
+
+func TestHandlerConfirmRechazaJSONInvalido(
+	t *testing.T,
+) {
+	handler := NewHandler(
+		&fakeReservaService{
+			confirmFn: func(
+				ctx context.Context,
+				input ConfirmarInput,
+			) (Reserva, error) {
+				t.Fatal(
+					"Confirm no debe ejecutarse con JSON inválido",
+				)
+
+				return Reserva{}, nil
+			},
+		},
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/reservas/confirmaciones",
+		strings.NewReader(
+			`{"reserva_id": "tres"}`,
+		),
+	)
+
+	recorder := httptest.NewRecorder()
+
+	handler.HandleConfirmations(
+		recorder,
+		request,
+	)
+
+	if recorder.Code !=
+		http.StatusBadRequest {
+		t.Fatalf(
+			"se esperaba status %d, se obtuvo %d",
+			http.StatusBadRequest,
+			recorder.Code,
+		)
+	}
+}
+
+func TestHandlerConfirmRechazaMetodoNoPermitido(
+	t *testing.T,
+) {
+	handler := NewHandler(
+		&fakeReservaService{},
+	)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/reservas/confirmaciones",
+		nil,
+	)
+
+	recorder := httptest.NewRecorder()
+
+	handler.HandleConfirmations(
+		recorder,
+		request,
+	)
+
+	if recorder.Code !=
+		http.StatusMethodNotAllowed {
+		t.Fatalf(
+			"se esperaba status %d, se obtuvo %d",
+			http.StatusMethodNotAllowed,
+			recorder.Code,
+		)
+	}
+
+	if allow := recorder.Header().Get(
+		"Allow",
+	); allow != "POST" {
+		t.Errorf(
+			"se esperaba Allow POST, se obtuvo %q",
+			allow,
 		)
 	}
 }

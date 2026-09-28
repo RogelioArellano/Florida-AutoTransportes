@@ -38,6 +38,14 @@ type datosTramo struct {
 	PermiteBajar bool
 }
 
+// datosReservaPago contiene únicamente la información que
+// necesitamos para decidir si una reserva acepta un pago.
+type datosReservaPago struct {
+	TotalCentavos  int64
+	PagadoCentavos int64
+	Estado         Estado
+}
+
 const consultaReservaBase = `
 	SELECT
 		r.id,
@@ -218,7 +226,7 @@ func (r *PostgresRepository) Create(
 	}
 
 	if params.Input.PagoInicial != nil {
-		if err := insertarPagoInicial(
+		if err := insertarPago(
 			ctx,
 			tx,
 			reservaID,
@@ -248,6 +256,181 @@ func (r *PostgresRepository) Create(
 	}
 
 	return reservaCreada, nil
+}
+
+// RegisterPayment agrega un abono a una reserva existente.
+//
+// Toda la operación se realiza dentro de una transacción.
+// La reserva se bloquea con FOR UPDATE para impedir que dos
+// pagos simultáneos utilicen el mismo saldo pendiente.
+func (r *PostgresRepository) RegisterPayment(
+	ctx context.Context,
+	input RegistrarPagoInput,
+) (Reserva, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Reserva{}, fmt.Errorf(
+			"iniciar transacción de pago: %w",
+			err,
+		)
+	}
+
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	datos, err := consultarReservaParaPago(
+		ctx,
+		tx,
+		input.ReservaID,
+	)
+	if err != nil {
+		return Reserva{}, err
+	}
+
+	montoCentavos, err := parsearDecimal(
+		string(input.Monto),
+	)
+	if err != nil || montoCentavos <= 0 {
+		return Reserva{}, fmt.Errorf(
+			"%w: el monto del pago no es válido",
+			ErrDatosInvalidos,
+		)
+	}
+
+	saldoCentavos :=
+		datos.TotalCentavos -
+			datos.PagadoCentavos
+
+	if saldoCentavos <= 0 {
+		return Reserva{}, ErrReservaSinSaldo
+	}
+
+	if montoCentavos > saldoCentavos {
+		return Reserva{}, fmt.Errorf(
+			"%w: saldo pendiente %s, pago recibido %s",
+			ErrPagoExcedeSaldo,
+			formatearDecimal(saldoCentavos),
+			formatearDecimal(montoCentavos),
+		)
+	}
+
+	if err := insertarPago(
+		ctx,
+		tx,
+		input.ReservaID,
+		input.PagoInput,
+	); err != nil {
+		return Reserva{}, err
+	}
+
+	// El primer pago confirma automáticamente una reserva
+	// que había sido apartada sin anticipo.
+	if datos.Estado == EstadoApartada {
+		if err := confirmarReservaPorPago(
+			ctx,
+			tx,
+			input.ReservaID,
+		); err != nil {
+			return Reserva{}, err
+		}
+	}
+
+	reservaActualizada, err :=
+		obtenerReservaPorID(
+			ctx,
+			tx,
+			input.ReservaID,
+		)
+	if err != nil {
+		return Reserva{}, fmt.Errorf(
+			"consultar reserva después del pago: %w",
+			err,
+		)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Reserva{}, fmt.Errorf(
+			"confirmar transacción de pago: %w",
+			err,
+		)
+	}
+
+	return reservaActualizada, nil
+}
+
+// Confirm confirma manualmente una reserva.
+//
+// La operación es idempotente: confirmar nuevamente una
+// reserva que ya está CONFIRMADA no genera error ni modifica
+// incorrectamente la fecha original de confirmación.
+func (r *PostgresRepository) Confirm(
+	ctx context.Context,
+	input ConfirmarInput,
+) (Reserva, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Reserva{}, fmt.Errorf(
+			"iniciar transacción de confirmación: %w",
+			err,
+		)
+	}
+
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	estado, err := consultarEstadoReservaBloqueado(
+		ctx,
+		tx,
+		input.ReservaID,
+	)
+	if err != nil {
+		return Reserva{}, err
+	}
+
+	switch estado {
+	case EstadoApartada:
+		if err := actualizarReservaConfirmada(
+			ctx,
+			tx,
+			input.ReservaID,
+		); err != nil {
+			return Reserva{}, err
+		}
+
+	case EstadoConfirmada:
+		// La operación es idempotente. Si una automatización
+		// repite la solicitud, devolvemos la misma reserva.
+
+	default:
+		return Reserva{}, fmt.Errorf(
+			"%w: estado %s",
+			ErrReservaNoAceptaConfirmacion,
+			estado,
+		)
+	}
+
+	reserva, err := obtenerReservaPorID(
+		ctx,
+		tx,
+		input.ReservaID,
+	)
+	if err != nil {
+		return Reserva{}, fmt.Errorf(
+			"consultar reserva confirmada: %w",
+			err,
+		)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Reserva{}, fmt.Errorf(
+			"confirmar transacción de confirmación: %w",
+			err,
+		)
+	}
+
+	return reserva, nil
 }
 
 // List consulta reservas aplicando filtros opcionales.
@@ -362,6 +545,36 @@ func (r *PostgresRepository) List(
 	}
 
 	return reservasEncontradas, nil
+}
+
+// GetByID consulta una reserva y carga todos sus pagos.
+//
+// Reutiliza obtenerReservaPorID, que acepta cualquier valor
+// que implemente la interfaz querier. El pool de PostgreSQL
+// implementa Query y QueryRow, por lo que puede utilizarse
+// directamente sin abrir una transacción.
+func (r *PostgresRepository) GetByID(
+	ctx context.Context,
+	reservaID int64,
+) (Reserva, error) {
+	reserva, err := obtenerReservaPorID(
+		ctx,
+		r.pool,
+		reservaID,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Reserva{},
+			ErrReservaNoEncontrada
+	}
+
+	if err != nil {
+		return Reserva{}, fmt.Errorf(
+			"consultar detalle de reserva: %w",
+			err,
+		)
+	}
+
+	return reserva, nil
 }
 
 // consultarCorridaParaReserva obtiene y bloquea la corrida.
@@ -660,7 +873,6 @@ func guardarPasajero(
 
 	return pasajeroID, nil
 }
-
 func insertarReserva(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -688,34 +900,34 @@ func insertarReserva(
 			observaciones
 		)
 		VALUES (
-			$1,
-			$2,
-			$3,
-			$4,
-			$5,
-			$6::NUMERIC,
-			$7::NUMERIC,
-			$8,
-			$9::NUMERIC,
-			$10,
-			$11::NUMERIC,
-			$12,
-			$13::NUMERIC,
-			$14,
-			$15,
+			$1::BIGINT,
+			$2::BIGINT,
+			$3::BIGINT,
+			$4::BIGINT,
+			$5::SMALLINT,
+			$6::NUMERIC(12, 2),
+			$7::NUMERIC(12, 2),
+			$8::VARCHAR(20),
+			$9::NUMERIC(12, 2),
+			$10::SMALLINT,
+			$11::NUMERIC(12, 2),
+			$12::VARCHAR(250),
+			$13::NUMERIC(12, 2),
+			$14::VARCHAR(30),
+			$15::BOOLEAN,
 			CASE
-				WHEN $14 = 'CONFIRMADA'
+				WHEN $14::VARCHAR(30) = 'CONFIRMADA'
 					THEN NOW()
 				ELSE NULL
 			END,
-			$16
+			$16::TEXT
 		)
 		RETURNING id;
 	`
 
 	var tipoDescuento any
-	var valorDescuento = "0.00"
-	var cantidadPasajesDescuento int
+	valorDescuento := "0.00"
+	cantidadPasajesDescuento := 0
 	var descripcionDescuento any
 
 	if params.Input.Descuento != nil {
@@ -726,12 +938,10 @@ func insertarReserva(
 			params.Input.Descuento.Valor
 
 		cantidadPasajesDescuento =
-			params.Input.Descuento.
-				CantidadPasajes
+			params.Input.Descuento.CantidadPasajes
 
 		descripcionDescuento =
-			params.Input.Descuento.
-				Descripcion
+			params.Input.Descuento.Descripcion
 	}
 
 	var reservaID int64
@@ -800,7 +1010,158 @@ func incluirParadasEnRecorrido(
 	return nil
 }
 
-func insertarPagoInicial(
+// consultarReservaParaPago bloquea la reserva y obtiene
+// su total, sus pagos aplicados y su estado operativo.
+func consultarReservaParaPago(
+	ctx context.Context,
+	tx pgx.Tx,
+	reservaID int64,
+) (datosReservaPago, error) {
+	const bloquearReserva = `
+		SELECT
+			total::NUMERIC(12, 2)::TEXT,
+			estado
+		FROM reservas
+		WHERE id = $1
+		FOR UPDATE;
+	`
+
+	var totalTexto string
+	var estadoTexto string
+
+	err := tx.QueryRow(
+		ctx,
+		bloquearReserva,
+		reservaID,
+	).Scan(
+		&totalTexto,
+		&estadoTexto,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return datosReservaPago{},
+			ErrReservaNoEncontrada
+	}
+
+	if err != nil {
+		return datosReservaPago{}, fmt.Errorf(
+			"consultar reserva para pago: %w",
+			err,
+		)
+	}
+
+	estado := Estado(estadoTexto)
+
+	// ABORDADA también acepta pagos porque un pasajero
+	// podría liquidar su adeudo después de realizar el viaje.
+	switch estado {
+	case EstadoApartada,
+		EstadoConfirmada,
+		EstadoAbordada:
+		// Estado válido para recibir pagos.
+
+	default:
+		return datosReservaPago{},
+			fmt.Errorf(
+				"%w: estado %s",
+				ErrReservaNoAceptaPagos,
+				estado,
+			)
+	}
+
+	totalCentavos, err :=
+		parsearDecimal(totalTexto)
+	if err != nil {
+		return datosReservaPago{}, fmt.Errorf(
+			"interpretar total de la reserva: %w",
+			err,
+		)
+	}
+
+	const consultarPagado = `
+		SELECT
+			COALESCE(
+				SUM(monto),
+				0
+			)::NUMERIC(12, 2)::TEXT
+		FROM pagos_reserva
+		WHERE reserva_id = $1
+			AND estado = 'APLICADO';
+	`
+
+	var pagadoTexto string
+
+	err = tx.QueryRow(
+		ctx,
+		consultarPagado,
+		reservaID,
+	).Scan(&pagadoTexto)
+	if err != nil {
+		return datosReservaPago{}, fmt.Errorf(
+			"consultar pagos aplicados: %w",
+			err,
+		)
+	}
+
+	pagadoCentavos, err :=
+		parsearDecimal(pagadoTexto)
+	if err != nil {
+		return datosReservaPago{}, fmt.Errorf(
+			"interpretar pagos aplicados: %w",
+			err,
+		)
+	}
+
+	return datosReservaPago{
+		TotalCentavos:  totalCentavos,
+		PagadoCentavos: pagadoCentavos,
+		Estado:         estado,
+	}, nil
+}
+
+// confirmarReservaPorPago confirma una reserva que había
+// sido apartada sin anticipo.
+func confirmarReservaPorPago(
+	ctx context.Context,
+	tx pgx.Tx,
+	reservaID int64,
+) error {
+	const query = `
+		UPDATE reservas
+		SET
+			estado = 'CONFIRMADA',
+			requiere_confirmacion = FALSE,
+			confirmada_en = COALESCE(
+				confirmada_en,
+				NOW()
+			),
+			confirmacion_solicitada_en = NULL,
+			confirmacion_limite_en = NULL,
+			actualizado_en = NOW()
+		WHERE id = $1
+			AND estado = 'APARTADA';
+	`
+
+	_, err := tx.Exec(
+		ctx,
+		query,
+		reservaID,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"confirmar reserva mediante pago: %w",
+			err,
+		)
+	}
+
+	return nil
+}
+
+// insertarPago registra un movimiento financiero aplicado
+// a una reserva.
+//
+// Se utiliza tanto para el anticipo inicial como para los
+// abonos posteriores.
+func insertarPago(
 	ctx context.Context,
 	tx pgx.Tx,
 	reservaID int64,
@@ -815,11 +1176,11 @@ func insertarPagoInicial(
 			notas
 		)
 		VALUES (
-			$1,
-			$2::NUMERIC,
-			$3,
-			$4,
-			$5
+			$1::BIGINT,
+			$2::NUMERIC(12, 2),
+			$3::VARCHAR(30),
+			$4::VARCHAR(150),
+			$5::TEXT
 		);
 	`
 
@@ -834,7 +1195,82 @@ func insertarPagoInicial(
 	)
 	if err != nil {
 		return fmt.Errorf(
-			"insertar pago inicial: %w",
+			"insertar pago de reserva: %w",
+			err,
+		)
+	}
+
+	return nil
+}
+
+// consultarEstadoReservaBloqueado obtiene y bloquea una
+// reserva para evitar cambios simultáneos de estado.
+func consultarEstadoReservaBloqueado(
+	ctx context.Context,
+	tx pgx.Tx,
+	reservaID int64,
+) (Estado, error) {
+	const query = `
+		SELECT estado
+		FROM reservas
+		WHERE id = $1
+		FOR UPDATE;
+	`
+
+	var estadoTexto string
+
+	err := tx.QueryRow(
+		ctx,
+		query,
+		reservaID,
+	).Scan(&estadoTexto)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "",
+			ErrReservaNoEncontrada
+	}
+
+	if err != nil {
+		return "", fmt.Errorf(
+			"consultar estado de reserva: %w",
+			err,
+		)
+	}
+
+	return Estado(estadoTexto), nil
+}
+
+// actualizarReservaConfirmada realiza el cambio operativo.
+//
+// No registra un pago. Por eso una reserva puede quedar
+// CONFIRMADA y continuar con estado_pago SIN_PAGO.
+func actualizarReservaConfirmada(
+	ctx context.Context,
+	tx pgx.Tx,
+	reservaID int64,
+) error {
+	const query = `
+		UPDATE reservas
+		SET
+			estado = 'CONFIRMADA',
+			requiere_confirmacion = FALSE,
+			confirmada_en = COALESCE(
+				confirmada_en,
+				NOW()
+			),
+			confirmacion_solicitada_en = NULL,
+			confirmacion_limite_en = NULL,
+			actualizado_en = NOW()
+		WHERE id = $1;
+	`
+
+	_, err := tx.Exec(
+		ctx,
+		query,
+		reservaID,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"actualizar reserva confirmada: %w",
 			err,
 		)
 	}

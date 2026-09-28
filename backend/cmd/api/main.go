@@ -175,6 +175,21 @@ func main() {
 		reservasHandler.Handle,
 	)
 
+	mux.HandleFunc(
+		"/api/reservas/pagos",
+		reservasHandler.HandlePayments,
+	)
+
+	mux.HandleFunc(
+		"/api/reservas/",
+		reservasHandler.HandleDetail,
+	)
+
+	mux.HandleFunc(
+		"/api/reservas/confirmaciones",
+		reservasHandler.HandleConfirmations,
+	)
+
 	server := &http.Server{
 		Addr:              appConfig.HTTPAddr,
 		Handler:           mux,
