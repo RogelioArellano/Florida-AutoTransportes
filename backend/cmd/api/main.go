@@ -14,6 +14,7 @@ import (
 	"floridaAT/internal/localidades"
 	"floridaAT/internal/programaciones"
 	"floridaAT/internal/puntosabordaje"
+	"floridaAT/internal/reservas"
 	"floridaAT/internal/rutas"
 	"floridaAT/internal/unidades"
 
@@ -117,6 +118,19 @@ func main() {
 	corridasHandler :=
 		corridas.NewHandler(corridasService)
 
+	reservasRepository :=
+		reservas.NewPostgresRepository(pool)
+
+	reservasService :=
+		reservas.NewService(
+			reservasRepository,
+		)
+
+	reservasHandler :=
+		reservas.NewHandler(
+			reservasService,
+		)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/healthz", healthHandler)
 	mux.HandleFunc("/api/readyz", readyHandler(pool))
@@ -154,6 +168,11 @@ func main() {
 	mux.HandleFunc(
 		"/api/corridas",
 		corridasHandler.Handle,
+	)
+
+	mux.HandleFunc(
+		"/api/reservas",
+		reservasHandler.Handle,
 	)
 
 	server := &http.Server{
