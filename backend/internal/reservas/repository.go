@@ -46,6 +46,22 @@ type datosReservaPago struct {
 	Estado         Estado
 }
 
+// datosReservaCancelacion contiene la información obtenida
+// bajo bloqueo para decidir cómo cancelar una reserva.
+type datosReservaCancelacion struct {
+	Estado Estado
+
+	CorridaID       int64
+	ParadaOrigenID  int64
+	ParadaDestinoID int64
+
+	MontoPagadoCentavos int64
+
+	PuedeCancelar     bool
+	DentroLimite      bool
+	LimiteReembolsoEn time.Time
+}
+
 const consultaReservaBase = `
 	SELECT
 		r.id,
@@ -83,8 +99,8 @@ const consultaReservaBase = `
 
 		r.total::TEXT,
 
-		saldos.monto_pagado::TEXT,
-		saldos.saldo_pendiente::TEXT,
+		saldos.monto_pagado::NUMERIC(12, 2)::TEXT,
+		saldos.saldo_pendiente::NUMERIC(12, 2)::TEXT,
 		saldos.estado_pago,
 
 		r.estado,
@@ -95,6 +111,10 @@ const consultaReservaBase = `
 
 		r.cancelada_en,
 		r.motivo_cancelacion,
+		r.cancelacion_reembolsable,
+		r.monto_reembolsable::NUMERIC(12, 2)::TEXT,
+		r.limite_reembolso_en,
+
 		r.observaciones,
 
 		r.creado_en,
@@ -426,6 +446,136 @@ func (r *PostgresRepository) Confirm(
 	if err := tx.Commit(ctx); err != nil {
 		return Reserva{}, fmt.Errorf(
 			"confirmar transacción de confirmación: %w",
+			err,
+		)
+	}
+
+	return reserva, nil
+}
+
+// Cancel cancela una reserva y libera sus lugares.
+//
+// La reserva se bloquea para impedir que un pago y una
+// cancelación sean procesados simultáneamente.
+func (r *PostgresRepository) Cancel(
+	ctx context.Context,
+	params CancelParams,
+) (Reserva, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return Reserva{}, fmt.Errorf(
+			"iniciar transacción de cancelación: %w",
+			err,
+		)
+	}
+
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
+
+	datos, err := consultarReservaParaCancelacion(
+		ctx,
+		tx,
+		params.Input.ReservaID,
+		params.HorasLimiteReembolso,
+	)
+	if err != nil {
+		return Reserva{}, err
+	}
+
+	// La cancelación es idempotente. Si n8n o el panel
+	// repiten la solicitud, devolvemos el estado existente.
+	if datos.Estado == EstadoCancelada {
+		reserva, err := obtenerReservaPorID(
+			ctx,
+			tx,
+			params.Input.ReservaID,
+		)
+		if err != nil {
+			return Reserva{}, fmt.Errorf(
+				"consultar reserva cancelada: %w",
+				err,
+			)
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			return Reserva{}, fmt.Errorf(
+				"confirmar consulta de cancelación: %w",
+				err,
+			)
+		}
+
+		return reserva, nil
+	}
+
+	switch datos.Estado {
+	case EstadoApartada,
+		EstadoConfirmada:
+		// Estados permitidos.
+
+	default:
+		return Reserva{}, fmt.Errorf(
+			"%w: estado %s",
+			ErrReservaNoAceptaCancelacion,
+			datos.Estado,
+		)
+	}
+
+	if !datos.PuedeCancelar {
+		return Reserva{},
+			ErrSalidaYaIniciada
+	}
+
+	esReembolsable :=
+		datos.MontoPagadoCentavos > 0 &&
+			datos.DentroLimite
+
+	montoReembolsableCentavos := int64(0)
+
+	if esReembolsable {
+		montoReembolsableCentavos =
+			datos.MontoPagadoCentavos
+	}
+
+	if err := actualizarReservaCancelada(
+		ctx,
+		tx,
+		params.Input,
+		esReembolsable,
+		montoReembolsableCentavos,
+		datos.LimiteReembolsoEn,
+	); err != nil {
+		return Reserva{}, err
+	}
+
+	// Si el origen o destino era una parada bajo demanda,
+	// comprobamos si todavía existe alguna reserva activa
+	// que necesite esa parada.
+	if err := recalcularParadasBajoDemanda(
+		ctx,
+		tx,
+		datos.CorridaID,
+		datos.ParadaOrigenID,
+		datos.ParadaDestinoID,
+	); err != nil {
+		return Reserva{}, err
+	}
+
+	reserva, err := obtenerReservaPorID(
+		ctx,
+		tx,
+		params.Input.ReservaID,
+	)
+	if err != nil {
+		return Reserva{}, fmt.Errorf(
+			"consultar reserva cancelada: %w",
+			err,
+		)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Reserva{}, fmt.Errorf(
+			"confirmar transacción de cancelación: %w",
 			err,
 		)
 	}
@@ -1425,6 +1575,10 @@ func scanReserva(
 	var estadoReserva string
 	var estadoPago string
 
+	var cancelacionReembolsable bool
+	var montoReembolsable string
+	var limiteReembolsoEn sql.NullTime
+
 	err := fila.Scan(
 		&reserva.ID,
 		&reserva.Folio,
@@ -1470,6 +1624,10 @@ func scanReserva(
 
 		&canceladaEn,
 		&motivoCancelacion,
+		&cancelacionReembolsable,
+		&montoReembolsable,
+		&limiteReembolsoEn,
+
 		&observaciones,
 
 		&reserva.CreadoEn,
@@ -1543,6 +1701,15 @@ func scanReserva(
 
 	reserva.MotivoCancelacion =
 		stringDesdeNull(motivoCancelacion)
+
+	reserva.CancelacionReembolsable =
+		cancelacionReembolsable
+
+	reserva.MontoReembolsable =
+		Dinero(montoReembolsable)
+
+	reserva.LimiteReembolsoEn =
+		timeDesdeNull(limiteReembolsoEn)
 
 	reserva.Observaciones =
 		stringDesdeNull(observaciones)
@@ -1658,4 +1825,210 @@ func valorStringOpcional(
 	}
 
 	return *valor
+}
+
+// consultarReservaParaCancelacion bloquea la reserva y
+// calcula la política utilizando la hora de PostgreSQL.
+//
+// Esto evita depender del reloj o zona horaria del servidor
+// donde esté ejecutándose la API.
+func consultarReservaParaCancelacion(
+	ctx context.Context,
+	tx pgx.Tx,
+	reservaID int64,
+	horasLimite int,
+) (datosReservaCancelacion, error) {
+	const query = `
+		SELECT
+			r.estado,
+			r.corrida_id,
+			r.corrida_parada_origen_id,
+			r.corrida_parada_destino_id,
+
+			COALESCE(
+				(
+					SELECT SUM(pr.monto)
+					FROM pagos_reserva pr
+					WHERE pr.reserva_id = r.id
+						AND pr.estado = 'APLICADO'
+				),
+				0
+			)::NUMERIC(12, 2)::TEXT,
+
+			NOW() < c.salida_programada,
+
+			NOW() <= (
+				c.salida_programada
+				- (
+					$2::INTEGER
+					* INTERVAL '1 hour'
+				)
+			),
+
+			c.salida_programada
+				- (
+					$2::INTEGER
+					* INTERVAL '1 hour'
+				)
+
+		FROM reservas r
+
+		INNER JOIN corridas c
+			ON c.id = r.corrida_id
+
+		WHERE r.id = $1
+
+		FOR UPDATE OF r;
+	`
+
+	var datos datosReservaCancelacion
+	var estadoTexto string
+	var montoPagadoTexto string
+
+	err := tx.QueryRow(
+		ctx,
+		query,
+		reservaID,
+		horasLimite,
+	).Scan(
+		&estadoTexto,
+		&datos.CorridaID,
+		&datos.ParadaOrigenID,
+		&datos.ParadaDestinoID,
+		&montoPagadoTexto,
+		&datos.PuedeCancelar,
+		&datos.DentroLimite,
+		&datos.LimiteReembolsoEn,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return datosReservaCancelacion{},
+			ErrReservaNoEncontrada
+	}
+
+	if err != nil {
+		return datosReservaCancelacion{}, fmt.Errorf(
+			"consultar reserva para cancelación: %w",
+			err,
+		)
+	}
+
+	montoPagadoCentavos, err :=
+		parsearDecimal(montoPagadoTexto)
+	if err != nil {
+		return datosReservaCancelacion{}, fmt.Errorf(
+			"interpretar pagos de reserva: %w",
+			err,
+		)
+	}
+
+	datos.Estado = Estado(estadoTexto)
+	datos.MontoPagadoCentavos =
+		montoPagadoCentavos
+
+	return datos, nil
+}
+
+func actualizarReservaCancelada(
+	ctx context.Context,
+	tx pgx.Tx,
+	input CancelarInput,
+	esReembolsable bool,
+	montoReembolsableCentavos int64,
+	limiteReembolsoEn time.Time,
+) error {
+	const query = `
+		UPDATE reservas
+		SET
+			estado = 'CANCELADA',
+			requiere_confirmacion = FALSE,
+			confirmacion_solicitada_en = NULL,
+			confirmacion_limite_en = NULL,
+
+			cancelada_en = NOW(),
+			motivo_cancelacion = $2::VARCHAR(500),
+
+			cancelacion_reembolsable = $3::BOOLEAN,
+			monto_reembolsable =
+				$4::NUMERIC(12, 2),
+			limite_reembolso_en = $5,
+
+			actualizado_en = NOW()
+
+		WHERE id = $1::BIGINT;
+	`
+
+	_, err := tx.Exec(
+		ctx,
+		query,
+		input.ReservaID,
+		input.Motivo,
+		esReembolsable,
+		formatearDecimal(
+			montoReembolsableCentavos,
+		),
+		limiteReembolsoEn,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"actualizar reserva cancelada: %w",
+			err,
+		)
+	}
+
+	return nil
+}
+
+// recalcularParadasBajoDemanda desactiva una parada
+// opcional cuando ya no existe ninguna reserva activa que
+// suba o baje pasajeros en ella.
+//
+// Las paradas obligatorias nunca se modifican.
+func recalcularParadasBajoDemanda(
+	ctx context.Context,
+	tx pgx.Tx,
+	corridaID int64,
+	origenID int64,
+	destinoID int64,
+) error {
+	const query = `
+		UPDATE corrida_paradas cp
+		SET
+			incluida_en_recorrido = EXISTS (
+				SELECT 1
+				FROM reservas r
+				WHERE r.corrida_id = cp.corrida_id
+					AND r.estado IN (
+						'APARTADA',
+						'CONFIRMADA',
+						'ABORDADA'
+					)
+					AND (
+						r.corrida_parada_origen_id =
+							cp.id
+						OR
+						r.corrida_parada_destino_id =
+							cp.id
+					)
+			),
+			actualizado_en = NOW()
+		WHERE cp.corrida_id = $1
+			AND cp.id IN ($2, $3)
+			AND cp.es_obligatoria = FALSE;
+	`
+
+	_, err := tx.Exec(
+		ctx,
+		query,
+		corridaID,
+		origenID,
+		destinoID,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"recalcular paradas bajo demanda: %w",
+			err,
+		)
+	}
+
+	return nil
 }

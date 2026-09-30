@@ -14,6 +14,11 @@ import (
 const (
 	maxImporteCentavos   int64 = 999_999_999_999
 	maxCantidadPasajeros       = 100
+
+	// Inicialmente la cancelación debe solicitarse al menos
+	// tres horas antes para tener derecho a reembolso.
+	// Posteriormente este valor vendrá de configuración.
+	horasLimiteReembolso = 3
 )
 
 var (
@@ -68,6 +73,14 @@ var (
 	ErrReservaNoAceptaConfirmacion = errors.New(
 		"la reserva no acepta confirmación en su estado actual",
 	)
+
+	ErrReservaNoAceptaCancelacion = errors.New(
+		"la reserva no acepta cancelación en su estado actual",
+	)
+
+	ErrSalidaYaIniciada = errors.New(
+		"la salida de la corrida ya inició",
+	)
 )
 
 // CreateParams contiene la información ya validada,
@@ -85,6 +98,16 @@ type CreateParams struct {
 
 	Estado               Estado
 	RequiereConfirmacion bool
+}
+
+// CancelParams contiene los datos validados por el Service
+// y la política de reembolso vigente.
+//
+// El Repository calculará el límite real utilizando la
+// salida programada almacenada en PostgreSQL.
+type CancelParams struct {
+	Input                CancelarInput
+	HorasLimiteReembolso int
 }
 
 // Store define las operaciones de persistencia que necesita
@@ -113,6 +136,11 @@ type Store interface {
 	Confirm(
 		ctx context.Context,
 		input ConfirmarInput,
+	) (Reserva, error)
+
+	Cancel(
+		ctx context.Context,
+		params CancelParams,
 	) (Reserva, error)
 }
 
@@ -479,6 +507,50 @@ func (s *Service) Confirm(
 	return s.store.Confirm(
 		ctx,
 		input,
+	)
+}
+
+// Cancel valida la solicitud de cancelación.
+//
+// Las decisiones dependientes de la base de datos, como
+// la hora de salida, los pagos aplicados y el estado actual,
+// serán comprobadas por el Repository.
+func (s *Service) Cancel(
+	ctx context.Context,
+	input CancelarInput,
+) (Reserva, error) {
+	if input.ReservaID <= 0 {
+		return Reserva{}, fmt.Errorf(
+			"%w: reserva_id debe ser válido",
+			ErrDatosInvalidos,
+		)
+	}
+
+	input.Motivo =
+		strings.TrimSpace(input.Motivo)
+
+	if input.Motivo == "" {
+		return Reserva{}, fmt.Errorf(
+			"%w: el motivo de cancelación es obligatorio",
+			ErrDatosInvalidos,
+		)
+	}
+
+	if utf8.RuneCountInString(
+		input.Motivo,
+	) > 500 {
+		return Reserva{}, fmt.Errorf(
+			"%w: el motivo de cancelación no puede exceder 500 caracteres",
+			ErrDatosInvalidos,
+		)
+	}
+
+	return s.store.Cancel(
+		ctx,
+		CancelParams{
+			Input:                input,
+			HorasLimiteReembolso: horasLimiteReembolso,
+		},
 	)
 }
 

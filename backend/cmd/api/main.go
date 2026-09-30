@@ -190,6 +190,11 @@ func main() {
 		reservasHandler.HandleConfirmations,
 	)
 
+	mux.HandleFunc(
+		"/api/reservas/cancelaciones",
+		reservasHandler.HandleCancellations,
+	)
+
 	server := &http.Server{
 		Addr:              appConfig.HTTPAddr,
 		Handler:           mux,

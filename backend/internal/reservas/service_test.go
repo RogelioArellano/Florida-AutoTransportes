@@ -32,6 +32,11 @@ type fakeStore struct {
 	confirmResult Reserva
 	confirmErr    error
 	confirmCalls  int
+
+	cancelParams CancelParams
+	cancelResult Reserva
+	cancelErr    error
+	cancelCalls  int
 }
 
 var _ Store = (*fakeStore)(nil)
@@ -105,6 +110,20 @@ func (f *fakeStore) Confirm(
 	}
 
 	return f.confirmResult, nil
+}
+
+func (f *fakeStore) Cancel(
+	ctx context.Context,
+	params CancelParams,
+) (Reserva, error) {
+	f.cancelCalls++
+	f.cancelParams = params
+
+	if f.cancelErr != nil {
+		return Reserva{}, f.cancelErr
+	}
+
+	return f.cancelResult, nil
 }
 
 func TestServiceCreateCalculaDescuentoYAnticipo(
@@ -1690,6 +1709,161 @@ func TestServiceConfirmPropagaErrorStore(
 		t.Errorf(
 			"Store.Confirm() fue llamado %d veces; se esperaba 1",
 			store.confirmCalls,
+		)
+	}
+}
+
+func TestServiceCancelNormalizaYEnviaPolitica(
+	t *testing.T,
+) {
+	store := &fakeStore{
+		cancelResult: Reserva{
+			ID:                      4,
+			Estado:                  EstadoCancelada,
+			CancelacionReembolsable: true,
+			MontoReembolsable:       "300.00",
+		},
+	}
+
+	service := NewService(store)
+
+	resultado, err := service.Cancel(
+		context.Background(),
+		CancelarInput{
+			ReservaID: 4,
+			Motivo:    "  El pasajero canceló su viaje  ",
+		},
+	)
+	if err != nil {
+		t.Fatalf(
+			"Cancel() devolvió un error inesperado: %v",
+			err,
+		)
+	}
+
+	if store.cancelCalls != 1 {
+		t.Fatalf(
+			"Store.Cancel() fue llamado %d veces; se esperaba 1",
+			store.cancelCalls,
+		)
+	}
+
+	if store.cancelParams.Input.ReservaID != 4 {
+		t.Errorf(
+			"ReservaID = %d; se esperaba 4",
+			store.cancelParams.Input.ReservaID,
+		)
+	}
+
+	if store.cancelParams.Input.Motivo !=
+		"El pasajero canceló su viaje" {
+		t.Errorf(
+			"Motivo = %q",
+			store.cancelParams.Input.Motivo,
+		)
+	}
+
+	if store.cancelParams.HorasLimiteReembolso != 3 {
+		t.Errorf(
+			"HorasLimiteReembolso = %d; se esperaba 3",
+			store.cancelParams.HorasLimiteReembolso,
+		)
+	}
+
+	if resultado.Estado != EstadoCancelada {
+		t.Errorf(
+			"Estado = %q; se esperaba CANCELADA",
+			resultado.Estado,
+		)
+	}
+}
+
+func TestServiceCancelValidaciones(
+	t *testing.T,
+) {
+	pruebas := []struct {
+		nombre string
+		input  CancelarInput
+	}{
+		{
+			nombre: "reserva inválida",
+			input: CancelarInput{
+				ReservaID: 0,
+				Motivo:    "Cancelación",
+			},
+		},
+		{
+			nombre: "motivo vacío",
+			input: CancelarInput{
+				ReservaID: 1,
+				Motivo:    "   ",
+			},
+		},
+		{
+			nombre: "motivo demasiado largo",
+			input: CancelarInput{
+				ReservaID: 1,
+				Motivo: strings.Repeat(
+					"a",
+					501,
+				),
+			},
+		},
+	}
+
+	for _, prueba := range pruebas {
+		t.Run(
+			prueba.nombre,
+			func(t *testing.T) {
+				store := &fakeStore{}
+				service := NewService(store)
+
+				_, err := service.Cancel(
+					context.Background(),
+					prueba.input,
+				)
+
+				if !errors.Is(
+					err,
+					ErrDatosInvalidos,
+				) {
+					t.Fatalf(
+						"se esperaba ErrDatosInvalidos, se obtuvo %v",
+						err,
+					)
+				}
+
+				if store.cancelCalls != 0 {
+					t.Error(
+						"Store.Cancel() no debe ejecutarse con datos inválidos",
+					)
+				}
+			},
+		)
+	}
+}
+
+func TestServiceCancelPropagaErrorStore(
+	t *testing.T,
+) {
+	store := &fakeStore{
+		cancelErr: ErrSalidaYaIniciada,
+	}
+
+	service := NewService(store)
+
+	_, err := service.Cancel(
+		context.Background(),
+		CancelarInput{
+			ReservaID: 1,
+			Motivo:    "Cancelación de prueba",
+		},
+	)
+
+	if !errors.Is(err, ErrSalidaYaIniciada) {
+		t.Fatalf(
+			"se esperaba ErrSalidaYaIniciada, se obtuvo %v",
+			err,
 		)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeReservaService struct {
@@ -35,6 +36,11 @@ type fakeReservaService struct {
 	confirmFn func(
 		ctx context.Context,
 		input ConfirmarInput,
+	) (Reserva, error)
+
+	cancelFn func(
+		ctx context.Context,
+		input CancelarInput,
 	) (Reserva, error)
 }
 
@@ -109,6 +115,22 @@ func (f *fakeReservaService) Confirm(
 	}
 
 	return f.confirmFn(
+		ctx,
+		input,
+	)
+}
+
+func (f *fakeReservaService) Cancel(
+	ctx context.Context,
+	input CancelarInput,
+) (Reserva, error) {
+	if f.cancelFn == nil {
+		return Reserva{}, errors.New(
+			"fakeReservaService.Cancel no fue configurado",
+		)
+	}
+
+	return f.cancelFn(
 		ctx,
 		input,
 	)
@@ -1469,6 +1491,303 @@ func TestHandlerCreateRechazaJSONInvalido(
 					)
 				}
 			},
+		)
+	}
+}
+
+func TestHandlerCancel(
+	t *testing.T,
+) {
+	var inputRecibido CancelarInput
+
+	limite := time.Date(
+		2026,
+		time.September,
+		30,
+		3,
+		0,
+		0,
+		0,
+		time.FixedZone("CST", -6*60*60),
+	)
+
+	service := &fakeReservaService{
+		cancelFn: func(
+			ctx context.Context,
+			input CancelarInput,
+		) (Reserva, error) {
+			inputRecibido = input
+
+			motivo :=
+				"El pasajero canceló su viaje"
+
+			return Reserva{
+				ID:                      4,
+				Folio:                   "RES-00000004",
+				Estado:                  EstadoCancelada,
+				EstadoPago:              EstadoPagoParcial,
+				CanceladaEn:             &limite,
+				MotivoCancelacion:       &motivo,
+				CancelacionReembolsable: true,
+				MontoReembolsable:       Dinero("300.00"),
+				LimiteReembolsoEn:       &limite,
+				Pagos:                   []Pago{},
+			}, nil
+		},
+	}
+
+	handler := NewHandler(service)
+
+	body := `{
+		"reserva_id": 4,
+		"motivo": "El pasajero canceló su viaje"
+	}`
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/reservas/cancelaciones",
+		strings.NewReader(body),
+	)
+
+	request.Header.Set(
+		"Content-Type",
+		"application/json",
+	)
+
+	recorder := httptest.NewRecorder()
+
+	handler.HandleCancellations(
+		recorder,
+		request,
+	)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf(
+			"se esperaba status %d, se obtuvo %d. Respuesta: %s",
+			http.StatusOK,
+			recorder.Code,
+			recorder.Body.String(),
+		)
+	}
+
+	if inputRecibido.ReservaID != 4 {
+		t.Errorf(
+			"ReservaID = %d; se esperaba 4",
+			inputRecibido.ReservaID,
+		)
+	}
+
+	if inputRecibido.Motivo !=
+		"El pasajero canceló su viaje" {
+		t.Errorf(
+			"Motivo = %q",
+			inputRecibido.Motivo,
+		)
+	}
+
+	var respuesta struct {
+		Data Reserva `json:"data"`
+	}
+
+	if err := json.NewDecoder(
+		recorder.Body,
+	).Decode(&respuesta); err != nil {
+		t.Fatalf(
+			"no se pudo decodificar la respuesta: %v",
+			err,
+		)
+	}
+
+	if respuesta.Data.Estado !=
+		EstadoCancelada {
+		t.Errorf(
+			"Estado = %q; se esperaba CANCELADA",
+			respuesta.Data.Estado,
+		)
+	}
+
+	if !respuesta.Data.CancelacionReembolsable {
+		t.Error(
+			"se esperaba una cancelación reembolsable",
+		)
+	}
+
+	if respuesta.Data.MontoReembolsable !=
+		Dinero("300.00") {
+		t.Errorf(
+			"MontoReembolsable = %q; se esperaba 300.00",
+			respuesta.Data.MontoReembolsable,
+		)
+	}
+}
+
+func TestHandlerCancelTraduceErrores(
+	t *testing.T,
+) {
+	pruebas := []struct {
+		nombre         string
+		errorServicio  error
+		statusEsperado int
+	}{
+		{
+			nombre: "datos inválidos",
+			errorServicio: fmt.Errorf(
+				"%w: motivo obligatorio",
+				ErrDatosInvalidos,
+			),
+			statusEsperado: http.StatusBadRequest,
+		},
+		{
+			nombre:         "reserva inexistente",
+			errorServicio:  ErrReservaNoEncontrada,
+			statusEsperado: http.StatusNotFound,
+		},
+		{
+			nombre:         "estado no cancelable",
+			errorServicio:  ErrReservaNoAceptaCancelacion,
+			statusEsperado: http.StatusConflict,
+		},
+		{
+			nombre:         "salida ya iniciada",
+			errorServicio:  ErrSalidaYaIniciada,
+			statusEsperado: http.StatusConflict,
+		},
+		{
+			nombre: "error interno",
+			errorServicio: errors.New(
+				"PostgreSQL no disponible",
+			),
+			statusEsperado: http.StatusInternalServerError,
+		},
+	}
+
+	body := `{
+		"reserva_id": 4,
+		"motivo": "Cancelación solicitada"
+	}`
+
+	for _, prueba := range pruebas {
+		t.Run(
+			prueba.nombre,
+			func(t *testing.T) {
+				service := &fakeReservaService{
+					cancelFn: func(
+						ctx context.Context,
+						input CancelarInput,
+					) (Reserva, error) {
+						return Reserva{},
+							prueba.errorServicio
+					},
+				}
+
+				handler := NewHandler(service)
+
+				request := httptest.NewRequest(
+					http.MethodPost,
+					"/api/reservas/cancelaciones",
+					strings.NewReader(body),
+				)
+
+				recorder :=
+					httptest.NewRecorder()
+
+				handler.HandleCancellations(
+					recorder,
+					request,
+				)
+
+				if recorder.Code !=
+					prueba.statusEsperado {
+					t.Fatalf(
+						"se esperaba status %d, se obtuvo %d. Respuesta: %s",
+						prueba.statusEsperado,
+						recorder.Code,
+						recorder.Body.String(),
+					)
+				}
+			},
+		)
+	}
+}
+
+func TestHandlerCancelRechazaJSONInvalido(
+	t *testing.T,
+) {
+	handler := NewHandler(
+		&fakeReservaService{
+			cancelFn: func(
+				ctx context.Context,
+				input CancelarInput,
+			) (Reserva, error) {
+				t.Fatal(
+					"Cancel no debe ejecutarse con JSON inválido",
+				)
+
+				return Reserva{}, nil
+			},
+		},
+	)
+
+	request := httptest.NewRequest(
+		http.MethodPost,
+		"/api/reservas/cancelaciones",
+		strings.NewReader(
+			`{"reserva_id": "cuatro"}`,
+		),
+	)
+
+	recorder := httptest.NewRecorder()
+
+	handler.HandleCancellations(
+		recorder,
+		request,
+	)
+
+	if recorder.Code !=
+		http.StatusBadRequest {
+		t.Fatalf(
+			"se esperaba status %d, se obtuvo %d",
+			http.StatusBadRequest,
+			recorder.Code,
+		)
+	}
+}
+
+func TestHandlerCancelRechazaMetodoNoPermitido(
+	t *testing.T,
+) {
+	handler := NewHandler(
+		&fakeReservaService{},
+	)
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/api/reservas/cancelaciones",
+		nil,
+	)
+
+	recorder := httptest.NewRecorder()
+
+	handler.HandleCancellations(
+		recorder,
+		request,
+	)
+
+	if recorder.Code !=
+		http.StatusMethodNotAllowed {
+		t.Fatalf(
+			"se esperaba status %d, se obtuvo %d",
+			http.StatusMethodNotAllowed,
+			recorder.Code,
+		)
+	}
+
+	if allow := recorder.Header().Get(
+		"Allow",
+	); allow != "POST" {
+		t.Errorf(
+			"se esperaba Allow POST, se obtuvo %q",
+			allow,
 		)
 	}
 }

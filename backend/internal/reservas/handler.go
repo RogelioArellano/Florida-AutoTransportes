@@ -40,6 +40,11 @@ type reservaService interface {
 		ctx context.Context,
 		input ConfirmarInput,
 	) (Reserva, error)
+
+	Cancel(
+		ctx context.Context,
+		input CancelarInput,
+	) (Reserva, error)
 }
 
 type Handler struct {
@@ -179,6 +184,34 @@ func (h *Handler) HandleConfirmations(
 	switch r.Method {
 	case http.MethodPost:
 		h.confirm(w, r)
+
+	default:
+		w.Header().Set(
+			"Allow",
+			"POST",
+		)
+
+		responderError(
+			w,
+			http.StatusMethodNotAllowed,
+			"método no permitido",
+		)
+	}
+}
+
+// HandleCancellations atiende la cancelación manual o
+// automatizada de una reserva.
+//
+// Ruta:
+//
+//	POST /api/reservas/cancelaciones
+func (h *Handler) HandleCancellations(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	switch r.Method {
+	case http.MethodPost:
+		h.cancel(w, r)
 
 	default:
 		w.Header().Set(
@@ -463,6 +496,60 @@ func construirFiltro(
 	return filter, nil
 }
 
+// cancel decodifica la solicitud y delega la decisión
+// de cancelación y reembolso al Service y Repository.
+func (h *Handler) cancel(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	r.Body = http.MaxBytesReader(
+		w,
+		r.Body,
+		1<<20,
+	)
+
+	var input CancelarInput
+
+	if err := decodificarJSON(
+		r,
+		&input,
+	); err != nil {
+		responderError(
+			w,
+			http.StatusBadRequest,
+			fmt.Sprintf(
+				"JSON inválido: %v",
+				err,
+			),
+		)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(
+		r.Context(),
+		10*time.Second,
+	)
+	defer cancel()
+
+	reserva, err := h.service.Cancel(
+		ctx,
+		input,
+	)
+	if err != nil {
+		responderErrorServicio(w, err)
+		return
+	}
+
+	// Se modifica una reserva existente.
+	httpx.WriteJSON(
+		w,
+		http.StatusOK,
+		map[string]any{
+			"data": reserva,
+		},
+	)
+}
+
 // leerReservaIDRuta extrae el identificador ubicado después
 // de /api/reservas/.
 //
@@ -710,6 +797,26 @@ func responderErrorServicio(
 			w,
 			http.StatusGatewayTimeout,
 			"la operación excedió el tiempo permitido",
+		)
+
+	case errors.Is(
+		err,
+		ErrReservaNoAceptaCancelacion,
+	):
+		responderError(
+			w,
+			http.StatusConflict,
+			err.Error(),
+		)
+
+	case errors.Is(
+		err,
+		ErrSalidaYaIniciada,
+	):
+		responderError(
+			w,
+			http.StatusConflict,
+			err.Error(),
 		)
 
 	default:

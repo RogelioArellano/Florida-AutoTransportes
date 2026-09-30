@@ -165,6 +165,15 @@ type Reserva struct {
 	CanceladaEn       *time.Time `json:"cancelada_en"`
 	MotivoCancelacion *string    `json:"motivo_cancelacion"`
 
+	// Política de reembolso aplicada al cancelar.
+	//
+	// CancelacionReembolsable solamente indica que existe
+	// derecho a solicitar el reembolso. No significa que el
+	// dinero ya fue devuelto.
+	CancelacionReembolsable bool       `json:"cancelacion_reembolsable"`
+	MontoReembolsable       Dinero     `json:"monto_reembolsable"`
+	LimiteReembolsoEn       *time.Time `json:"limite_reembolso_en"`
+
 	Observaciones *string `json:"observaciones"`
 
 	// Los pagos se cargarán al consultar el detalle.
