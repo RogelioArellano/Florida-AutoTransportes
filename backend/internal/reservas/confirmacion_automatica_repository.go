@@ -83,6 +83,13 @@ func (r *PostgresRepository) ListPendingConfirmations(
 			AND c.estado = 'PROGRAMADA'
 			AND c.reservas_abiertas = TRUE
 
+			AND NOW() >= (
+				c.salida_programada
+					- (
+						$1::INTEGER
+						* INTERVAL '1 hour'
+					)
+			)
 			AND NOW() < (
 				c.salida_programada
 					- (
@@ -283,6 +290,13 @@ func consultarReservaParaSolicitudConfirmacion(
 					AND pr.estado = 'APLICADO'
 			),
 
+			NOW() >= (
+				c.salida_programada
+					- (
+						$2::INTEGER
+						* INTERVAL '1 hour'
+					)
+			)
 			AND NOW() < (
 				c.salida_programada
 					- (
@@ -290,7 +304,6 @@ func consultarReservaParaSolicitudConfirmacion(
 						* INTERVAL '1 minute'
 					)
 			)
-			AND NOW() < c.salida_programada
 
 		FROM reservas r
 
