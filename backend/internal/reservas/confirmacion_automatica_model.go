@@ -40,8 +40,8 @@ type SolicitarConfirmacionInput struct {
 //
 // Los cálculos de fecha se realizarán con NOW() de PostgreSQL.
 type PoliticaConfirmacionParams struct {
-	HorasAnticipacion int
-	MinutosRespuesta  int
+	HorasAnticipacion          int
+	MinutosMargenAntesDeSalida int
 }
 
 // SolicitarConfirmacionParams combina la solicitud validada

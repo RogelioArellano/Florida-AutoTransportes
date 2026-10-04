@@ -83,11 +83,11 @@ func (r *PostgresRepository) ListPendingConfirmations(
 			AND c.estado = 'PROGRAMADA'
 			AND c.reservas_abiertas = TRUE
 
-			AND NOW() >= (
+			AND NOW() < (
 				c.salida_programada
 					- (
-						$1::INTEGER
-						* INTERVAL '1 hour'
+						$2::INTEGER
+						* INTERVAL '1 minute'
 					)
 			)
 			AND NOW() < c.salida_programada
@@ -108,6 +108,7 @@ func (r *PostgresRepository) ListPendingConfirmations(
 		ctx,
 		query,
 		politica.HorasAnticipacion,
+		politica.MinutosMargenAntesDeSalida,
 	)
 	if err != nil {
 		return nil, fmt.Errorf(
@@ -173,6 +174,7 @@ func (r *PostgresRepository) RequestConfirmation(
 		tx,
 		params.Input.ReservaID,
 		params.HorasAnticipacion,
+		params.MinutosMargenAntesDeSalida,
 	)
 	if err != nil {
 		return ConfirmacionPendiente{}, err
@@ -226,7 +228,7 @@ func (r *PostgresRepository) RequestConfirmation(
 		ctx,
 		tx,
 		params.Input.ReservaID,
-		params.MinutosRespuesta,
+		params.MinutosMargenAntesDeSalida,
 	); err != nil {
 		return ConfirmacionPendiente{}, err
 	}
@@ -262,6 +264,7 @@ func consultarReservaParaSolicitudConfirmacion(
 	tx pgx.Tx,
 	reservaID int64,
 	horasAnticipacion int,
+	minutosMargenAntesDeSalida int,
 ) (datosSolicitudConfirmacion, error) {
 	const query = `
 		SELECT
@@ -280,11 +283,11 @@ func consultarReservaParaSolicitudConfirmacion(
 					AND pr.estado = 'APLICADO'
 			),
 
-			NOW() >= (
+			AND NOW() < (
 				c.salida_programada
 					- (
-						$2::INTEGER
-						* INTERVAL '1 hour'
+						$3::INTEGER
+						* INTERVAL '1 minute'
 					)
 			)
 			AND NOW() < c.salida_programada
@@ -307,6 +310,7 @@ func consultarReservaParaSolicitudConfirmacion(
 		query,
 		reservaID,
 		horasAnticipacion,
+		minutosMargenAntesDeSalida,
 	).Scan(
 		&estadoReserva,
 		&datos.RequiereConfirmacion,
@@ -338,27 +342,31 @@ func actualizarSolicitudConfirmacion(
 	ctx context.Context,
 	tx pgx.Tx,
 	reservaID int64,
-	minutosRespuesta int,
+	minutosMargenAntesDeSalida int,
 ) error {
 	const query = `
-		UPDATE reservas
+		UPDATE reservas r
 		SET
 			confirmacion_solicitada_en = NOW(),
 			confirmacion_limite_en =
-				NOW()
-					+ (
+				c.salida_programada
+					- (
 						$2::INTEGER
 						* INTERVAL '1 minute'
 					),
 			actualizado_en = NOW()
-		WHERE id = $1;
+
+		FROM corridas c
+
+		WHERE r.id = $1
+			AND c.id = r.corrida_id;
 	`
 
 	_, err := tx.Exec(
 		ctx,
 		query,
 		reservaID,
-		minutosRespuesta,
+		minutosMargenAntesDeSalida,
 	)
 	if err != nil {
 		return fmt.Errorf(

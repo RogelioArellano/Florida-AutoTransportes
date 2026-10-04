@@ -86,10 +86,10 @@ func TestConfirmacionAutomaticaServiceListUsaPolitica(
 		)
 	}
 
-	if store.listPolitica.MinutosRespuesta != 90 {
+	if store.listPolitica.MinutosMargenAntesDeSalida != 90 {
 		t.Errorf(
-			"MinutosRespuesta = %d; se esperaba 90",
-			store.listPolitica.MinutosRespuesta,
+			"MinutosMargenAntesDeSalida = %d; se esperaba 90",
+			store.listPolitica.MinutosMargenAntesDeSalida,
 		)
 	}
 
@@ -143,7 +143,7 @@ func TestConfirmacionAutomaticaServiceRequestConfirmation(
 	}
 
 	if params.HorasAnticipacion != 3 ||
-		params.MinutosRespuesta != 90 {
+		params.MinutosMargenAntesDeSalida != 90 {
 		t.Errorf(
 			"política inesperada: %+v",
 			params.PoliticaConfirmacionParams,

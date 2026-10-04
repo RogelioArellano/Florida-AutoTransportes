@@ -10,8 +10,10 @@ const (
 	// La solicitud debe comenzar tres horas antes de la salida.
 	horasAnticipacionConfirmacion = 3
 
-	// El pasajero tendrá 90 minutos para responder.
-	minutosRespuestaConfirmacion = 90
+	// El límite se fija 90 minutos antes de la salida para
+	// conservar tiempo suficiente para liberar y revender el
+	// lugar si el pasajero no responde.
+	minutosMargenAntesDeSalida = 90
 )
 
 var (
@@ -89,7 +91,7 @@ func (s *ConfirmacionAutomaticaService) RequestConfirmation(
 
 func politicaConfirmacionActual() PoliticaConfirmacionParams {
 	return PoliticaConfirmacionParams{
-		HorasAnticipacion: horasAnticipacionConfirmacion,
-		MinutosRespuesta:  minutosRespuestaConfirmacion,
+		HorasAnticipacion:          horasAnticipacionConfirmacion,
+		MinutosMargenAntesDeSalida: minutosMargenAntesDeSalida,
 	}
 }

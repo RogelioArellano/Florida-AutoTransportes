@@ -1,0 +1,131 @@
+{
+  "name": "Reservas- Vencer confirmaciones",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "dd37e8fa-d724-4bcb-9f14-13c1ea9198b0",
+      "name": "Cada 5 minutos"
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8080/api/reservas/confirmaciones/vencidas",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "id": "23916e71-8aa5-4ae2-8972-ee1ebc535c79",
+      "name": "Consultar confirmaciones vencidas"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "data",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        448,
+        0
+      ],
+      "id": "aceb4ed3-b6ef-4979-bc77-7298f78ed6f0",
+      "name": "Separar reservas vencidas"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/reservas/confirmaciones/vencimientos",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "reserva_id",
+              "value": "={{ $json.reserva_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        0
+      ],
+      "id": "ea5d8067-7055-4440-b48f-e1805b13fd81",
+      "name": "Cancelar reserva vencida",
+      "retryOnFail": true
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Cada 5 minutos": {
+      "main": [
+        [
+          {
+            "node": "Consultar confirmaciones vencidas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar confirmaciones vencidas": {
+      "main": [
+        [
+          {
+            "node": "Separar reservas vencidas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Separar reservas vencidas": {
+      "main": [
+        [
+          {
+            "node": "Cancelar reserva vencida",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "4b84e788-a92f-41cb-a796-c8f33c3882e9",
+  "meta": {
+    "instanceId": "f80ce1b62712b3616175245e6aa23ec5428ee5a9482217696c536b2605c7607d"
+  },
+  "nodeGroups": [],
+  "id": "x5xDTtMVm7r0u7Id",
+  "tags": []
+}

@@ -1,0 +1,26 @@
+name: florida-autotransportes
+
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:2.41.6
+    container_name: florida-at-n8n
+    restart: unless-stopped
+
+    ports:
+      - "127.0.0.1:5678:5678"
+
+    environment:
+      TZ: America/Mexico_City
+      GENERIC_TIMEZONE: America/Mexico_City
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+volumes:
+  n8n_data:
+    name: florida_at_n8n_data
