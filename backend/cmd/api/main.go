@@ -141,6 +141,26 @@ func main() {
 			reembolsosService,
 		)
 
+	confirmacionesAutomaticasService :=
+		reservas.NewConfirmacionAutomaticaService(
+			reservasRepository,
+		)
+
+	confirmacionesAutomaticasHandler :=
+		reservas.NewConfirmacionAutomaticaHandler(
+			confirmacionesAutomaticasService,
+		)
+
+	confirmacionesVencimientoService :=
+		reservas.NewConfirmacionVencimientoService(
+			reservasRepository,
+		)
+
+	confirmacionesVencimientoHandler :=
+		reservas.NewConfirmacionVencimientoHandler(
+			confirmacionesVencimientoService,
+		)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/healthz", healthHandler)
 	mux.HandleFunc("/api/readyz", readyHandler(pool))
@@ -218,6 +238,26 @@ func main() {
 	mux.HandleFunc(
 		"/api/reservas/cancelaciones",
 		reservasHandler.HandleCancellations,
+	)
+
+	mux.HandleFunc(
+		"/api/reservas/confirmaciones/pendientes",
+		confirmacionesAutomaticasHandler.HandlePending,
+	)
+
+	mux.HandleFunc(
+		"/api/reservas/confirmaciones/solicitudes",
+		confirmacionesAutomaticasHandler.HandleRequests,
+	)
+
+	mux.HandleFunc(
+		"/api/reservas/confirmaciones/vencidas",
+		confirmacionesVencimientoHandler.HandleExpired,
+	)
+
+	mux.HandleFunc(
+		"/api/reservas/confirmaciones/vencimientos",
+		confirmacionesVencimientoHandler.HandleExpirations,
 	)
 
 	server := &http.Server{
