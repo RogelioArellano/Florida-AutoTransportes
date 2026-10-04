@@ -201,6 +201,11 @@ func main() {
 	)
 
 	mux.HandleFunc(
+		"/api/reservas/reembolsos/anulaciones",
+		reembolsosHandler.HandleVoids,
+	)
+
+	mux.HandleFunc(
 		"/api/reservas/",
 		reservasHandler.HandleDetail,
 	)

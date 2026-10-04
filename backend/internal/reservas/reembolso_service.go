@@ -40,6 +40,11 @@ type ReembolsoStore interface {
 		ctx context.Context,
 		reservaID int64,
 	) (ReembolsosReserva, error)
+
+	VoidRefund(
+		ctx context.Context,
+		input AnularReembolsoInput,
+	) (ReembolsosReserva, error)
 }
 
 // ReembolsoService contiene las reglas independientes de
