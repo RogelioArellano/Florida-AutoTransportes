@@ -131,6 +131,16 @@ func main() {
 			reservasService,
 		)
 
+	reembolsosService :=
+		reservas.NewReembolsoService(
+			reservasRepository,
+		)
+
+	reembolsosHandler :=
+		reservas.NewReembolsoHandler(
+			reembolsosService,
+		)
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/healthz", healthHandler)
 	mux.HandleFunc("/api/readyz", readyHandler(pool))
@@ -178,6 +188,16 @@ func main() {
 	mux.HandleFunc(
 		"/api/reservas/pagos",
 		reservasHandler.HandlePayments,
+	)
+
+	mux.HandleFunc(
+		"/api/reservas/reembolsos",
+		reembolsosHandler.HandleCollection,
+	)
+
+	mux.HandleFunc(
+		"/api/reservas/{reservaID}/reembolsos",
+		reembolsosHandler.HandleByReservation,
 	)
 
 	mux.HandleFunc(
