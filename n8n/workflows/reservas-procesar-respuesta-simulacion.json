@@ -1,0 +1,168 @@
+{
+  "name": "Reservas - Procesar respuesta - Simulacion",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "reservas/confirmaciones/respuestas",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "7df0a95d-0d1e-47b1-8872-332477d41689",
+      "name": "Recibir respuesta simulada",
+      "webhookId": "77c45405-4d9e-4870-a945-602e0b781ec7"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "33b30de4-cb9c-43b7-a539-04dfde551cdb",
+              "leftValue": "={{ $json.body.respuesta.toUpperCase() }}",
+              "rightValue": "CONFIRMAR",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        224,
+        0
+      ],
+      "id": "9c64d425-8ea7-4938-ae35-7b3e37753acb",
+      "name": "Respuesta es CONFIRMAR"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/reservas/confirmaciones",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "reserva_id",
+              "value": "={{ $json.body.reserva_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        448,
+        -96
+      ],
+      "id": "1929f792-d86a-4c53-99f6-781060c7bb7c",
+      "name": "Confirmar reserva",
+      "retryOnFail": true
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        672,
+        -96
+      ],
+      "id": "aa1e4f77-5ca4-45ca-b7fc-96a848b88dfe",
+      "name": "Responder confirmacion exitosa"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\n  \"error\": \"respuesta no reconocida\"\n}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        448,
+        96
+      ],
+      "id": "58de2de2-d58c-43c3-bfc7-12bc6687e7ab",
+      "name": "Responder accion invalida"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Recibir respuesta simulada": {
+      "main": [
+        [
+          {
+            "node": "Respuesta es CONFIRMAR",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respuesta es CONFIRMAR": {
+      "main": [
+        [
+          {
+            "node": "Confirmar reserva",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder accion invalida",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirmar reserva": {
+      "main": [
+        [
+          {
+            "node": "Responder confirmacion exitosa",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "569a4142-6ab0-4e0b-b6e1-845fbc759fef",
+  "meta": {
+    "instanceId": "f80ce1b62712b3616175245e6aa23ec5428ee5a9482217696c536b2605c7607d"
+  },
+  "nodeGroups": [],
+  "id": "3ZKQBFb0jxOvRxiw",
+  "tags": []
+}
