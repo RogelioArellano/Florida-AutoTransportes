@@ -30,7 +30,7 @@
           "conditions": [
             {
               "id": "33b30de4-cb9c-43b7-a539-04dfde551cdb",
-              "leftValue": "={{ $json.body.respuesta.toUpperCase() }}",
+              "leftValue": "={{ String($json.body?.respuesta ?? '').trim().toUpperCase() }}",
               "rightValue": "CONFIRMAR",
               "operator": {
                 "type": "string",

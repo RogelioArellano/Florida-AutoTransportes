@@ -1,0 +1,80 @@
+{
+  "name": "Corridas - Lista de pasajeros - Simulacion",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "916e1cff-4bcc-4e99-9b1e-8793e6ee3313",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8080/api/corridas/4/pasajeros",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "id": "8b7956d2-d914-4864-9d46-b170084a2d6d",
+      "name": "Consultar lista de pasajeross"
+    },
+    {
+      "parameters": {
+        "jsCode": "const entrada = $input.first().json;\nconst lista = entrada.data;\n\nif (!lista) {\n  throw new Error(\n    'La API no devolvió la propiedad data con la lista de pasajeros'\n  );\n}\n\nconst reservas = Array.isArray(lista.reservas)\n  ? lista.reservas\n  : [];\n\nconst detalleReservas = reservas.length === 0\n  ? 'No hay pasajeros registrados para esta corrida.'\n  : reservas\n      .map((reserva, indice) => {\n        const cantidadTexto =\n          reserva.cantidad_pasajeros === 1\n            ? '1 pasajero'\n            : `${reserva.cantidad_pasajeros} pasajeros`;\n\n        const observaciones = reserva.observaciones\n          ? `\\n   Nota: ${reserva.observaciones}`\n          : '';\n\n        return [\n          `${indice + 1}. ${reserva.pasajero_nombre}`,\n          `   Tel: ${reserva.pasajero_telefono}`,\n          `   ${cantidadTexto}`,\n          `   ${reserva.parada_origen_nombre} → ${reserva.parada_destino_nombre}`,\n          `   Reserva: ${reserva.estado_reserva}`,\n          `   Pago: ${reserva.estado_pago}`,\n          `   Saldo pendiente: $${reserva.saldo_pendiente}${observaciones}`,\n        ].join('\\n');\n      })\n      .join('\\n\\n');\n\nconst choferNombre =\n  lista.chofer_nombre ?? 'Chofer sin asignar';\n\nconst choferTelefono =\n  lista.chofer_telefono ?? null;\n\nconst mensaje = [\n  '🚌 LISTA DE PASAJEROS',\n  '',\n  `Corrida: ${lista.corrida_folio}`,\n  `Ruta: ${lista.ruta_nombre}`,\n  `Salida: ${lista.salida_programada}`,\n  `Unidad: ${lista.unidad_codigo}`,\n  `Chofer: ${choferNombre}`,\n  '',\n  `Reservas: ${lista.total_reservas}`,\n  `Pasajeros registrados: ${lista.total_pasajeros_registrados}`,\n  `Ocupación máxima: ${lista.ocupacion_maxima}/${lista.capacidad_pasajeros}`,\n  `Disponibles mínimos: ${lista.lugares_disponibles_minimos}`,\n  '',\n  `Total vendido: $${lista.total_vendido}`,\n  `Total cobrado: $${lista.total_cobrado}`,\n  `Total por cobrar: $${lista.total_por_cobrar}`,\n  '',\n  'PASAJEROS',\n  detalleReservas,\n].join('\\n');\n\nreturn [\n  {\n    json: {\n      envio_simulado: true,\n      corrida_id: lista.corrida_id,\n      corrida_folio: lista.corrida_folio,\n      destinatario_nombre: choferNombre,\n      destinatario_telefono: choferTelefono,\n      total_reservas: lista.total_reservas,\n      total_pasajeros: lista.total_pasajeros_registrados,\n      mensaje,\n      generado_en: new Date().toISOString(),\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "id": "8c333ee1-1ebe-44aa-b76c-18228d1ada29",
+      "name": "Code in JavaScript"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Consultar lista de pasajeross",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar lista de pasajeross": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "ffa3a49a-9d3a-41aa-97c3-c16e343a865c",
+  "meta": {
+    "instanceId": "f80ce1b62712b3616175245e6aa23ec5428ee5a9482217696c536b2605c7607d"
+  },
+  "nodeGroups": [],
+  "id": "AGNJKb0WDB9QUks7",
+  "tags": []
+}

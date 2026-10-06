@@ -1,0 +1,207 @@
+{
+  "name": "Corridas - Enviar listas pendientes - Simulacion",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "3e3d5372-da9e-4086-a3b7-8a06c3669b0b",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "url": "http://host.docker.internal:8080/api/corridas/listas-pasajeros/pendientes",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        224,
+        0
+      ],
+      "id": "51b3c7ad-e3f7-407a-9376-ffd94167b0a2",
+      "name": "Consultar listas pendientes"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "data",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        448,
+        0
+      ],
+      "id": "1a2a6fb5-8a72-43d7-a312-e5069ecd5af2",
+      "name": "Separar corridas pendientes"
+    },
+    {
+      "parameters": {
+        "url": "={{ 'http://host.docker.internal:8080/api/corridas/' + $json.corrida_id + '/pasajeros' }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        0
+      ],
+      "id": "b08140f2-c25e-486f-b06a-5c51cde3a49b",
+      "name": "Consultar pasajeros de corrida"
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().map((item) => {\n  const lista = item.json.data;\n\n  if (!lista) {\n    throw new Error(\n      'La API no devolvió la propiedad data con la lista de pasajeros'\n    );\n  }\n\n  if (!lista.chofer_id || !lista.chofer_telefono) {\n    throw new Error(\n      `La corrida ${lista.corrida_id} no tiene chofer o teléfono`\n    );\n  }\n\n  const reservas = Array.isArray(lista.reservas)\n    ? lista.reservas\n    : [];\n\n  const detalleReservas = reservas.length === 0\n    ? 'No hay pasajeros registrados para esta corrida.'\n    : reservas\n        .map((reserva, indice) => {\n          const cantidadTexto =\n            reserva.cantidad_pasajeros === 1\n              ? '1 pasajero'\n              : `${reserva.cantidad_pasajeros} pasajeros`;\n\n          const observaciones = reserva.observaciones\n            ? `\\n   Nota: ${reserva.observaciones}`\n            : '';\n\n          return [\n            `${indice + 1}. ${reserva.pasajero_nombre}`,\n            `   Tel: ${reserva.pasajero_telefono}`,\n            `   ${cantidadTexto}`,\n            `   ${reserva.parada_origen_nombre} → ${reserva.parada_destino_nombre}`,\n            `   Reserva: ${reserva.estado_reserva}`,\n            `   Pago: ${reserva.estado_pago}`,\n            `   Saldo pendiente: $${reserva.saldo_pendiente}${observaciones}`,\n          ].join('\\n');\n        })\n        .join('\\n\\n');\n\n  const mensaje = [\n    '🚌 LISTA DE PASAJEROS',\n    '',\n    `Corrida: ${lista.corrida_folio}`,\n    `Ruta: ${lista.ruta_nombre}`,\n    `Salida: ${lista.salida_programada}`,\n    `Unidad: ${lista.unidad_codigo}`,\n    `Chofer: ${lista.chofer_nombre}`,\n    '',\n    `Reservas: ${lista.total_reservas}`,\n    `Pasajeros registrados: ${lista.total_pasajeros_registrados}`,\n    `Ocupación máxima: ${lista.ocupacion_maxima}/${lista.capacidad_pasajeros}`,\n    `Disponibles mínimos: ${lista.lugares_disponibles_minimos}`,\n    '',\n    `Total vendido: $${lista.total_vendido}`,\n    `Total cobrado: $${lista.total_cobrado}`,\n    `Total por cobrar: $${lista.total_por_cobrar}`,\n    '',\n    'PASAJEROS',\n    detalleReservas,\n  ].join('\\n');\n\n  return {\n    json: {\n      corrida_id: lista.corrida_id,\n      corrida_folio: lista.corrida_folio,\n\n      chofer_id: lista.chofer_id,\n      destinatario_nombre: lista.chofer_nombre,\n      destinatario_telefono: lista.chofer_telefono,\n\n      mensaje,\n\n      total_reservas: lista.total_reservas,\n      total_pasajeros:\n        lista.total_pasajeros_registrados,\n\n      envio_simulado: true,\n      generado_en: new Date().toISOString(),\n    },\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "id": "d8156cfe-2026-48e4-8f4e-32402c0def0a",
+      "name": "Construir mensajes para choferes"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "828e5c91-2bec-4328-9961-5d5a9377e78e",
+              "name": "envio_confirmado",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "d8bbab97-231c-4b19-8856-6ed9cfed45b1",
+              "name": "proveedor",
+              "value": "SIMULACION",
+              "type": "string"
+            },
+            {
+              "id": "abd4f7e7-b4d7-4540-9773-fdb8e86b67f8",
+              "name": "proveedor_mensaje_id",
+              "value": "=={{ 'SIM-' + $json.corrida_id + '-' + $now.toMillis() }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1120,
+        0
+      ],
+      "id": "9c05fcfa-5806-4ca5-9968-70b0ae261308",
+      "name": "Simular envio de WhatsApp"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8080/api/corridas/listas-pasajeros/envios",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  corrida_id: Number($json.corrida_id),\n  chofer_id: Number($json.chofer_id)\n} }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1344,
+        0
+      ],
+      "id": "e93a4cdf-e976-40c0-befa-dfe4b748c6d5",
+      "name": "Registrar envio exitoso",
+      "retryOnFail": true
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Consultar listas pendientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar listas pendientes": {
+      "main": [
+        [
+          {
+            "node": "Separar corridas pendientes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Separar corridas pendientes": {
+      "main": [
+        [
+          {
+            "node": "Consultar pasajeros de corrida",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar pasajeros de corrida": {
+      "main": [
+        [
+          {
+            "node": "Construir mensajes para choferes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Construir mensajes para choferes": {
+      "main": [
+        [
+          {
+            "node": "Simular envio de WhatsApp",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simular envio de WhatsApp": {
+      "main": [
+        [
+          {
+            "node": "Registrar envio exitoso",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "6aa02537-1c7a-4367-b53d-c5163a5b7dca",
+  "meta": {
+    "instanceId": "f80ce1b62712b3616175245e6aa23ec5428ee5a9482217696c536b2605c7607d"
+  },
+  "nodeGroups": [],
+  "id": "1TDaCXzYEuUDqp7E",
+  "tags": []
+}

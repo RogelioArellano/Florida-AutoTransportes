@@ -131,6 +131,26 @@ func main() {
 			reservasService,
 		)
 
+	listaPasajerosService :=
+		reservas.NewListaPasajerosService(
+			reservasRepository,
+		)
+
+	listaPasajerosHandler :=
+		reservas.NewListaPasajerosHandler(
+			listaPasajerosService,
+		)
+
+	listaPasajerosEnvioService :=
+		reservas.NewListaPasajerosEnvioService(
+			reservasRepository,
+		)
+
+	listaPasajerosEnvioHandler :=
+		reservas.NewListaPasajerosEnvioHandler(
+			listaPasajerosEnvioService,
+		)
+
 	reembolsosService :=
 		reservas.NewReembolsoService(
 			reservasRepository,
@@ -198,6 +218,21 @@ func main() {
 	mux.HandleFunc(
 		"/api/corridas",
 		corridasHandler.Handle,
+	)
+
+	mux.HandleFunc(
+		"/api/corridas/{corridaID}/pasajeros",
+		listaPasajerosHandler.Handle,
+	)
+
+	mux.HandleFunc(
+		"/api/corridas/listas-pasajeros/pendientes",
+		listaPasajerosEnvioHandler.HandlePending,
+	)
+
+	mux.HandleFunc(
+		"/api/corridas/listas-pasajeros/envios",
+		listaPasajerosEnvioHandler.HandleDeliveries,
 	)
 
 	mux.HandleFunc(
