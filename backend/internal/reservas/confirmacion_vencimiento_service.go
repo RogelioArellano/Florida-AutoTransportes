@@ -69,11 +69,11 @@ func (s *ConfirmacionVencimientoService) ExpireConfirmation(
 		)
 	}
 
-	return s.store.ExpireConfirmation(
+	return completarReservaConAsistencia(s.store.ExpireConfirmation(
 		ctx,
 		VencerConfirmacionParams{
 			Input:             input,
 			MotivoCancelacion: motivoCancelacionConfirmacionVencida,
 		},
-	)
+	))
 }

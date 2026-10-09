@@ -109,6 +109,11 @@ const consultaReservaBase = `
 		r.confirmacion_solicitada_en,
 		r.confirmacion_limite_en,
 
+		r.cantidad_abordada,
+		r.abordada_en,
+		r.asistencia_cerrada_en,
+		r.observaciones_asistencia,
+
 		r.cancelada_en,
 		r.motivo_cancelacion,
 		r.cancelacion_reembolsable,
@@ -867,6 +872,9 @@ func consultarTramo(
 //	segmento 2 -> entre las paradas 2 y 3
 //
 // La reserva no ocupa un segmento después de su destino.
+// Antes del cierre se conserva todo el cupo reservado. Una asistencia
+// parcial cerrada ocupa únicamente los pasajes que sí abordaron.
+// La asistencia histórica desconocida conserva el cupo original.
 func consultarOcupacionMaxima(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -886,7 +894,10 @@ func consultarOcupacionMaxima(
 					(
 						SELECT
 							SUM(
-								r.cantidad_pasajeros
+								CASE WHEN r.estado = 'ABORDADA'
+									AND r.asistencia_cerrada_en IS NOT NULL
+									THEN COALESCE(r.cantidad_abordada, r.cantidad_pasajeros)
+									ELSE r.cantidad_pasajeros END
 							)
 						FROM reservas r
 
@@ -1560,6 +1571,11 @@ func scanReserva(
 	var confirmacionSolicitadaEn sql.NullTime
 	var confirmacionLimiteEn sql.NullTime
 
+	var cantidadAbordada sql.NullInt64
+	var abordadaEn sql.NullTime
+	var asistenciaCerradaEn sql.NullTime
+	var observacionesAsistencia sql.NullString
+
 	var canceladaEn sql.NullTime
 	var motivoCancelacion sql.NullString
 	var observaciones sql.NullString
@@ -1621,6 +1637,11 @@ func scanReserva(
 		&confirmadaEn,
 		&confirmacionSolicitadaEn,
 		&confirmacionLimiteEn,
+
+		&cantidadAbordada,
+		&abordadaEn,
+		&asistenciaCerradaEn,
+		&observacionesAsistencia,
 
 		&canceladaEn,
 		&motivoCancelacion,
@@ -1713,6 +1734,10 @@ func scanReserva(
 
 	reserva.Observaciones =
 		stringDesdeNull(observaciones)
+
+	reserva.DetalleAsistencia = detalleAsistenciaDesdeNull(
+		cantidadAbordada, abordadaEn, asistenciaCerradaEn, observacionesAsistencia,
+	)
 
 	return reserva, nil
 }

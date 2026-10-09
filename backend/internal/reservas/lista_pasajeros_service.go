@@ -47,7 +47,7 @@ func NewListaPasajerosService(
 	}
 }
 
-// GetPassengerList obtiene las reservas activas asociadas a
+// GetPassengerList obtiene las reservas no canceladas asociadas a
 // una corrida.
 //
 // El Repository será responsable de:
@@ -86,5 +86,5 @@ func (s *ListaPasajerosService) GetPassengerList(
 		)
 	}
 
-	return lista, nil
+	return completarListaConAsistencia(lista), nil
 }

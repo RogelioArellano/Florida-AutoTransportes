@@ -161,6 +161,9 @@ type Reserva struct {
 	ConfirmacionSolicitadaEn *time.Time `json:"confirmacion_solicitada_en"`
 	ConfirmacionLimiteEn     *time.Time `json:"confirmacion_limite_en"`
 
+	// Se serializa junto al estado operativo, sin modificar los pagos.
+	DetalleAsistencia
+
 	// Cancelación.
 	CanceladaEn       *time.Time `json:"cancelada_en"`
 	MotivoCancelacion *string    `json:"motivo_cancelacion"`

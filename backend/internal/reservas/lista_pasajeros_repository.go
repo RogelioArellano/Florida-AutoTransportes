@@ -73,6 +73,8 @@ func (r *PostgresRepository) GetPassengerList(
 // consultarResumenListaPasajeros obtiene la información de la
 // corrida, los acumulados financieros y la ocupación máxima
 // simultánea de cualquiera de sus segmentos.
+// Las reservas abiertas conservan su cupo; después del cierre se
+// descuentan las ausencias, conservando los importes vendidos.
 func consultarResumenListaPasajeros(
 	ctx context.Context,
 	tx pgx.Tx,
@@ -125,7 +127,10 @@ func consultarResumenListaPasajeros(
 						(
 							SELECT
 								SUM(
-									r.cantidad_pasajeros
+									CASE WHEN r.estado = 'ABORDADA'
+										AND r.asistencia_cerrada_en IS NOT NULL
+										THEN COALESCE(r.cantidad_abordada, r.cantidad_pasajeros)
+										ELSE r.cantidad_pasajeros END
 								)
 							FROM reservas r
 
@@ -342,6 +347,11 @@ func consultarReservasListaPasajeros(
 			r.estado,
 			r.requiere_confirmacion,
 
+			r.cantidad_abordada,
+			r.abordada_en,
+			r.asistencia_cerrada_en,
+			r.observaciones_asistencia,
+
 			r.total::NUMERIC(12, 2)::TEXT,
 			s.monto_pagado::NUMERIC(12, 2)::TEXT,
 			s.saldo_pendiente::NUMERIC(12, 2)::TEXT,
@@ -412,6 +422,10 @@ func consultarReservasListaPasajeros(
 
 		var observaciones sql.NullString
 
+		var cantidadAbordada sql.NullInt64
+		var abordadaEn, asistenciaCerradaEn sql.NullTime
+		var observacionesAsistencia sql.NullString
+
 		err := rows.Scan(
 			&reserva.ReservaID,
 			&reserva.ReservaFolio,
@@ -431,6 +445,11 @@ func consultarReservasListaPasajeros(
 			&cantidadPasajeros,
 			&estadoReserva,
 			&reserva.RequiereConfirmacion,
+
+			&cantidadAbordada,
+			&abordadaEn,
+			&asistenciaCerradaEn,
+			&observacionesAsistencia,
 
 			&total,
 			&montoPagado,
@@ -472,6 +491,10 @@ func consultarReservasListaPasajeros(
 
 		reserva.Observaciones =
 			stringDesdeNull(observaciones)
+
+		reserva.DetalleAsistencia = detalleAsistenciaDesdeNull(
+			cantidadAbordada, abordadaEn, asistenciaCerradaEn, observacionesAsistencia,
+		)
 
 		reservas = append(
 			reservas,

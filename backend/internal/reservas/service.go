@@ -311,7 +311,7 @@ func (s *Service) Create(
 		RequiereConfirmacion: requiereConfirmacion,
 	}
 
-	return s.store.Create(ctx, params)
+	return completarReservaConAsistencia(s.store.Create(ctx, params))
 }
 
 // RegisterPayment valida y normaliza un abono antes de
@@ -349,10 +349,10 @@ func (s *Service) RegisterPayment(
 
 	input.PagoInput = pago
 
-	return s.store.RegisterPayment(
+	return completarReservaConAsistencia(s.store.RegisterPayment(
 		ctx,
 		input,
-	)
+	))
 }
 
 // List valida y normaliza los filtros antes de consultar
@@ -465,7 +465,7 @@ func (s *Service) List(
 		return nil, err
 	}
 
-	return s.store.List(ctx, filter)
+	return completarReservasConAsistencia(s.store.List(ctx, filter))
 }
 
 // GetByID obtiene el detalle completo de una reserva.
@@ -483,10 +483,10 @@ func (s *Service) GetByID(
 		)
 	}
 
-	return s.store.GetByID(
+	return completarReservaConAsistencia(s.store.GetByID(
 		ctx,
 		reservaID,
-	)
+	))
 }
 
 // Confirm marca manualmente una reserva como confirmada.
@@ -504,10 +504,10 @@ func (s *Service) Confirm(
 		)
 	}
 
-	return s.store.Confirm(
+	return completarReservaConAsistencia(s.store.Confirm(
 		ctx,
 		input,
-	)
+	))
 }
 
 // Cancel valida la solicitud de cancelación.
@@ -545,13 +545,13 @@ func (s *Service) Cancel(
 		)
 	}
 
-	return s.store.Cancel(
+	return completarReservaConAsistencia(s.store.Cancel(
 		ctx,
 		CancelParams{
 			Input:                input,
 			HorasLimiteReembolso: horasLimiteReembolso,
 		},
-	)
+	))
 }
 
 // copiarInput evita efectos secundarios sobre estructuras

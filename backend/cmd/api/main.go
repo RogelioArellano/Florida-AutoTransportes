@@ -118,6 +118,12 @@ func main() {
 	corridasHandler :=
 		corridas.NewHandler(corridasService)
 
+	operacionCorridasService :=
+		corridas.NewOperacionService(corridasRepository)
+
+	operacionCorridasHandler :=
+		corridas.NewOperacionHandler(operacionCorridasService)
+
 	reservasRepository :=
 		reservas.NewPostgresRepository(pool)
 
@@ -130,6 +136,12 @@ func main() {
 		reservas.NewHandler(
 			reservasService,
 		)
+
+	asistenciaService :=
+		reservas.NewAsistenciaService(reservasRepository)
+
+	asistenciaHandler :=
+		reservas.NewAsistenciaHandler(asistenciaService)
 
 	listaPasajerosService :=
 		reservas.NewListaPasajerosService(
@@ -220,6 +232,8 @@ func main() {
 		corridasHandler.Handle,
 	)
 
+	operacionCorridasHandler.RegisterRoutes(mux)
+
 	mux.HandleFunc(
 		"/api/corridas/{corridaID}/pasajeros",
 		listaPasajerosHandler.Handle,
@@ -264,6 +278,8 @@ func main() {
 		"/api/reservas/",
 		reservasHandler.HandleDetail,
 	)
+
+	asistenciaHandler.RegisterRoutes(mux)
 
 	mux.HandleFunc(
 		"/api/reservas/confirmaciones",

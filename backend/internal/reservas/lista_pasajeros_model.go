@@ -32,11 +32,22 @@ type ListaPasajerosCorrida struct {
 	ChoferTelefono *string `json:"chofer_telefono"`
 
 	// Resumen operativo.
+	// TotalPasajerosRegistrados conserva los pasajes de las reservas;
+	// OcupacionMaxima refleja el cupo comprometido por segmento.
 	CapacidadPasajeros        int `json:"capacidad_pasajeros"`
 	TotalReservas             int `json:"total_reservas"`
 	TotalPasajerosRegistrados int `json:"total_pasajeros_registrados"`
 	OcupacionMaxima           int `json:"ocupacion_maxima"`
 	LugaresDisponiblesMinimos int `json:"lugares_disponibles_minimos"`
+
+	// Los totales son NULL si no se puede conocer la cantidad exacta.
+	// Las ausencias totales requieren que todas las asistencias estén cerradas.
+	// Las reservas históricas desconocidas se cuentan aparte de las abiertas.
+	TotalPasajerosAbordados            *int `json:"total_pasajeros_abordados"`
+	TotalPasajerosPendientes           *int `json:"total_pasajeros_pendientes"`
+	TotalPasajerosNoPresentados        *int `json:"total_pasajeros_no_presentados"`
+	TotalReservasAsistenciaAbierta     int  `json:"total_reservas_asistencia_abierta"`
+	TotalReservasAsistenciaDesconocida int  `json:"total_reservas_asistencia_desconocida"`
 
 	// Resumen financiero de las reservas no canceladas.
 	TotalVendido   Dinero `json:"total_vendido"`
@@ -74,6 +85,8 @@ type ReservaListaPasajeros struct {
 	CantidadPasajeros    int    `json:"cantidad_pasajeros"`
 	EstadoReserva        Estado `json:"estado_reserva"`
 	RequiereConfirmacion bool   `json:"requiere_confirmacion"`
+
+	DetalleAsistencia
 
 	// Información financiera separada del estado operativo.
 	Total          Dinero     `json:"total"`

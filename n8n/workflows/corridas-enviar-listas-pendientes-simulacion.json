@@ -86,7 +86,7 @@
             {
               "id": "abd4f7e7-b4d7-4540-9773-fdb8e86b67f8",
               "name": "proveedor_mensaje_id",
-              "value": "=={{ 'SIM-' + $json.corrida_id + '-' + $now.toMillis() }}",
+              "value": "={{ 'SIM-' + $json.corrida_id + '-' + $now.toMillis() }}",
               "type": "string"
             }
           ]
@@ -197,7 +197,7 @@
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "6aa02537-1c7a-4367-b53d-c5163a5b7dca",
+  "versionId": "0c484055-5862-4083-9b0e-fd0cd799e0b2",
   "meta": {
     "instanceId": "f80ce1b62712b3616175245e6aa23ec5428ee5a9482217696c536b2605c7607d"
   },
